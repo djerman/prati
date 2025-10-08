@@ -1,5 +1,10 @@
 package rs.atekom.prati.server;
 
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+
 import javax.servlet.ServletContextEvent;
 import javax.servlet.ServletContextListener;
 import javax.servlet.annotation.WebListener;
@@ -88,14 +93,14 @@ public class Servis implements ServletContextListener{
 	public static SistemUredjajiModeliServis sistemUredjajModelServis;
 	public static SistemUredjajiProizvodjaciServis sistemUredjajProizvodjacServis;
 	public static UredjajiServis uredjajServis;
-	
+
 	public static VozaciServis vozacServis;
 	public static VozaciDozvoleServis dozvolaServis;
 	public static VozaciLekarskoServis lekarskoServis;
 	public static VozaciLicenceServis licencaServis;
 	public static VozaciLicnaServis licnaServis;
 	public static VozaciPasosiServis pasosServis;
-	
+
 	public static VozilaServis voziloServis;
 	public static VozilaNaloziServis nalogServis;
 	public static VozilaOpremaServis opremaServis;
@@ -104,22 +109,26 @@ public class Servis implements ServletContextListener{
 	public static TroskoviServis trosakServis;
 	public static VozilaSaobracajneServis saobracajnaServis;
 	public static VozilaSaobracajne2Servis saobracajna2Servis;
-	
+
 	public static ObjekatZoneServis zonaObjekatServis;
 	public static ZoneServis zonaServis;
-	
+
 	public static String apiGoogle;
 	public static GeoApiContext gContext;
 	public static NominatimClient nClient;
 	public static NominatimReverseGeocodingJAPI nominatim;
 	public static Obracuni obracun;
 	public static Mail posta;
+
+	private ExecutorService serverExecutor;
+	private Future<?> neonFuture, nyitechFuture, genekoFuture, ruptelaFuture;
+
 	private OpstiServer ruptela;
 	private OpstiServer neon;
 	private OpstiServer geneko;
 	private NyitechServer nyitech;
 	private Thread neonServer, nyitechServer, genekoServer, ruptelaServer;
-	
+
 	@Override
 	public void contextInitialized(ServletContextEvent sce) {
 		context = new ClassPathXmlApplicationContext("applicationContext.xml");
@@ -152,14 +161,14 @@ public class Servis implements ServletContextListener{
 		sistemUredjajModelServis = ApplicationContextProvider.getApplicationContext().getBean("sistemUredjajModelServis", SistemUredjajiModeliServis.class);
 		sistemUredjajProizvodjacServis = ApplicationContextProvider.getApplicationContext().getBean("sistemUredjajProizvodjacServis", SistemUredjajiProizvodjaciServis.class);
 		uredjajServis = ApplicationContextProvider.getApplicationContext().getBean("uredjajServis", UredjajiServis.class);
-		
+
 		vozacServis = ApplicationContextProvider.getApplicationContext().getBean("vozacServis", VozaciServis.class);
 		dozvolaServis = ApplicationContextProvider.getApplicationContext().getBean("vozacDozvolaServis", VozaciDozvoleServis.class);
 		lekarskoServis = ApplicationContextProvider.getApplicationContext().getBean("vozacLekarskoServis", VozaciLekarskoServis.class);
 		licencaServis = ApplicationContextProvider.getApplicationContext().getBean("vozacLicencaServis", VozaciLicenceServis.class);
 		licnaServis = ApplicationContextProvider.getApplicationContext().getBean("vozacLicnaServis", VozaciLicnaServis.class);
 		pasosServis = ApplicationContextProvider.getApplicationContext().getBean("vozacPasosServis", VozaciPasosiServis.class);
-		
+
 		voziloServis = ApplicationContextProvider.getApplicationContext().getBean("voziloServis", VozilaServis.class);
 		nalogServis = ApplicationContextProvider.getApplicationContext().getBean("voziloNalogServis", VozilaNaloziServis.class);
 		opremaServis = ApplicationContextProvider.getApplicationContext().getBean("voziloOpremaServis", VozilaOpremaServis.class);
@@ -168,10 +177,10 @@ public class Servis implements ServletContextListener{
 		trosakServis = ApplicationContextProvider.getApplicationContext().getBean("trosakServis", TroskoviServis.class);
 		saobracajnaServis = ApplicationContextProvider.getApplicationContext().getBean("saobracajnaServis", VozilaSaobracajneServis.class);
 		saobracajna2Servis = ApplicationContextProvider.getApplicationContext().getBean("saobracajna2Servis", VozilaSaobracajne2Servis.class);
-		
+
 		zonaObjekatServis = ApplicationContextProvider.getApplicationContext().getBean("zonaObjekatServis", ObjekatZoneServis.class);
 		zonaServis = ApplicationContextProvider.getApplicationContext().getBean("zonaServis", ZoneServis.class);
-		
+
 		apiGoogle = sistemServis.vratiSistem().getApi();
 		gContext = new GeoApiContext().setApiKey(apiGoogle);
 		nClient = new NominatimClient(sistemServis.vratiSistem().getEmailVlasnika(), sistemServis.vratiSistem().getNominatimAdresa());
@@ -179,43 +188,67 @@ public class Servis implements ServletContextListener{
 		obracun = new Obracuni();
 		posta = new Mail(sistemServis.vratiSistem().getEmailServer(), String.valueOf(sistemServis.vratiSistem().getEmailServerPort()), 
 				sistemServis.vratiSistem().getEmailKorisnik(), sistemServis.vratiSistem().getEmailLozinka());
-		
+
 		try {
+			// === START of server startup (updated) ===
+			// NOTE: original code created Threads directly for each server.
+			// To make startup non-invasive and reversible, we keep the server instances
+			// but submit them to a dedicated ExecutorService. This allows easier control,
+			// graceful shutdown and limits the number of raw Threads created.
+			// Original Thread creation is left commented below for quick rollback.
 			neon = new OpstiServer(9000, 100);//76 aktivnih 2021-01-08
 			nyitech = new NyitechServer(9010, 20);//7 aktivnih 2021-01-08
 			geneko = new OpstiServer(9030, 20);//12 aktivnih 2021-01-08
 			ruptela = new OpstiServer(9040, 200);//58 aktivnih 2021-01-08
-			
-			neonServer = new Thread(neon);
-			nyitechServer = new Thread(nyitech);
-			genekoServer = new Thread(geneko);
-			ruptelaServer = new Thread(ruptela);
-			
-			neonServer.start();
-			nyitechServer.start();
-			genekoServer.start();
-			ruptelaServer.start();
-			} catch (Throwable e) {
-				System.out.println("error starting servers " + e.getMessage());
-				return;
-				}
+
+			//neonServer = new Thread(neon);
+			//nyitechServer = new Thread(nyitech);
+			//genekoServer = new Thread(geneko);
+			//ruptelaServer = new Thread(ruptela);
+
+			//neonServer.start();
+			//nyitechServer.start();
+			//genekoServer.start();
+			//ruptelaServer.start();
+			// Create single executor to host the server runnables (one thread per server instance)
+			serverExecutor = Executors.newFixedThreadPool(4, Executors.defaultThreadFactory());
+			// Submit server runnables (OpstiServer / NyitechServer implement Runnable)
+			neonFuture = serverExecutor.submit(neon);
+			nyitechFuture = serverExecutor.submit(nyitech);
+			genekoFuture = serverExecutor.submit(geneko);
+			ruptelaFuture = serverExecutor.submit(ruptela);
+			// === END of server startup (updated) ===
+		} catch (Throwable e) {
+			System.out.println("error starting servers " + e.getMessage());
+			return;
 		}
+	}
 
 	@Override
 	public void contextDestroyed(ServletContextEvent sce) {
+		serverExecutor.shutdown();
+		try {
+			if (!serverExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
+				serverExecutor.shutdownNow();
+			}
+		} catch (InterruptedException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+
 		context = null;
 		if(neonServer != null) {
 			neon.stop();
-			}
+		}
 		if(nyitechServer != null) {
 			nyitech.stop();
-			}
+		}
 		if(genekoServer != null) {
 			geneko.stop();
-			}
+		}
 		if(ruptelaServer != null) {
 			ruptela.stop();
-			}
+		}
 	}
 
 }

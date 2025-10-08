@@ -12,8 +12,8 @@
 		<maven>3</maven>
 	</prerequisites>
 	<properties>
-		<vaadin.version>8.14.2</vaadin.version>
-		<vaadin.plugin.version>8.14.2</vaadin.plugin.version>
+		<vaadin.version>8.14.3</vaadin.version>
+		<vaadin.plugin.version>8.14.3</vaadin.plugin.version>
 		<jetty.plugin.version>9.4.13.v20181111</jetty.plugin.version>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
 		<maven.compiler.source>1.8</maven.compiler.source>
@@ -50,6 +50,16 @@
 	        <groupId>rs.cybertrade.prati</groupId>
             <artifactId>pratiBaza</artifactId>
             <version>0.0.1-SNAPSHOT</version>
+            <exclusions>
+            	<exclusion>
+            		<groupId>asm</groupId>
+            		<artifactId>asm</artifactId>
+            	</exclusion>
+            	<exclusion>
+            		<groupId>org.ow2.asm</groupId>
+            		<artifactId>asm</artifactId>
+            	</exclusion>
+            </exclusions>
 	    </dependency>
 		<dependency>
 			<groupId>javax.servlet</groupId>
@@ -230,8 +240,8 @@
 							<!--<goal>update-theme</goal>
 							<goal>update-widgetset</goal>
 							<goal>compile</goal>
-							 Comment out compile-theme goal to use on-the-fly theme compilation -->
-							<goal>compile-theme</goal>
+							 Comment out compile-theme goal to use on-the-fly theme compilation 
+							<goal>compile-theme</goal>-->
 							<goal>clean</goal>
                             <goal>resources</goal>
                             <goal>update-theme</goal>
