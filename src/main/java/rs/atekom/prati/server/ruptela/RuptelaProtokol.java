@@ -1,4 +1,4 @@
-package rs.atekom.prati.server;
+package rs.atekom.prati.server.ruptela;
 
 import java.sql.Timestamp;
 import java.util.Date;
@@ -6,6 +6,8 @@ import pratiBaza.tabele.Javljanja;
 import pratiBaza.tabele.Obd;
 import pratiBaza.tabele.Objekti;
 import pratiBaza.tabele.SistemAlarmi;
+import rs.atekom.prati.server.JavljanjeObd;
+import rs.atekom.prati.server.Servis;
 
 public class RuptelaProtokol {
 	

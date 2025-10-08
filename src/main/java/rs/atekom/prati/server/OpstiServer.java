@@ -15,6 +15,12 @@ import org.springframework.stereotype.Service;
 
 import pratiBaza.tabele.Javljanja;
 import pratiBaza.tabele.SistemAlarmi;
+import rs.atekom.prati.server.geneko.GenekoOpstiThread;
+import rs.atekom.prati.server.geneko.GenekoProtokol;
+import rs.atekom.prati.server.neon.NeonOpstiThread;
+import rs.atekom.prati.server.neon.NeonProtokol;
+import rs.atekom.prati.server.ruptela.RuptelaOpstiThread;
+import rs.atekom.prati.server.ruptela.RuptelaProtokol;
 import rs.atekom.prati.view.komponente.Izvrsavanje;
 
 @Service

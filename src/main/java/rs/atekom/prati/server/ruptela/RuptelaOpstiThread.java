@@ -1,4 +1,4 @@
-package rs.atekom.prati.server;
+package rs.atekom.prati.server.ruptela;
 
 import java.net.Socket;
 import java.net.SocketException;
@@ -7,6 +7,9 @@ import java.util.concurrent.LinkedBlockingQueue;
 import javax.xml.bind.DatatypeConverter;
 import pratiBaza.tabele.Javljanja;
 import pratiBaza.tabele.Obd;
+import rs.atekom.prati.server.JavljanjeObd;
+import rs.atekom.prati.server.OpstiServer;
+import rs.atekom.prati.server.OpstiThread;
 
 public class RuptelaOpstiThread extends OpstiThread{
 

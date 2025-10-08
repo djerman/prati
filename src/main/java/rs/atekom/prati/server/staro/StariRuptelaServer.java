@@ -12,8 +12,8 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 
 import pratiBaza.tabele.SistemAlarmi;
-import rs.atekom.prati.server.RuptelaProtokol;
 import rs.atekom.prati.server.Servis;
+import rs.atekom.prati.server.ruptela.RuptelaProtokol;
 
 public class StariRuptelaServer implements Runnable{
 

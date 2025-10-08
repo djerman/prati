@@ -1,9 +1,12 @@
-package rs.atekom.prati.server;
+package rs.atekom.prati.server.neon;
 
 import java.net.Socket;
 import java.net.SocketException;
 import java.net.SocketTimeoutException;
 import java.util.concurrent.LinkedBlockingQueue;
+
+import rs.atekom.prati.server.OpstiServer;
+import rs.atekom.prati.server.OpstiThread;
 
 public class NeonOpstiThread extends OpstiThread{
 

@@ -59,6 +59,7 @@ import pratiBaza.servis.VozilaSaobracajneServis;
 import pratiBaza.servis.ObjekatZoneServis;
 import pratiBaza.servis.ZoneServis;
 import rs.atekom.prati.ApplicationContextProvider;
+import rs.atekom.prati.server.updated.OpstiServerUpdate;
 
 @WebListener
 public class Servis implements ServletContextListener{
@@ -123,9 +124,9 @@ public class Servis implements ServletContextListener{
 	private ExecutorService serverExecutor;
 	private Future<?> neonFuture, nyitechFuture, genekoFuture, ruptelaFuture;
 
-	private OpstiServer ruptela;
-	private OpstiServer neon;
-	private OpstiServer geneko;
+	private OpstiServerUpdate ruptela;
+	private OpstiServerUpdate neon;
+	private OpstiServerUpdate geneko;
 	private NyitechServer nyitech;
 	private Thread neonServer, nyitechServer, genekoServer, ruptelaServer;
 
@@ -196,10 +197,10 @@ public class Servis implements ServletContextListener{
 			// but submit them to a dedicated ExecutorService. This allows easier control,
 			// graceful shutdown and limits the number of raw Threads created.
 			// Original Thread creation is left commented below for quick rollback.
-			neon = new OpstiServer(9000, 100);//76 aktivnih 2021-01-08
+			neon = new OpstiServerUpdate(9000, 100);//76 aktivnih 2021-01-08
 			nyitech = new NyitechServer(9010, 20);//7 aktivnih 2021-01-08
-			geneko = new OpstiServer(9030, 20);//12 aktivnih 2021-01-08
-			ruptela = new OpstiServer(9040, 200);//58 aktivnih 2021-01-08
+			geneko = new OpstiServerUpdate(9030, 20);//12 aktivnih 2021-01-08
+			ruptela = new OpstiServerUpdate(9040, 200);//58 aktivnih 2021-01-08
 
 			//neonServer = new Thread(neon);
 			//nyitechServer = new Thread(nyitech);

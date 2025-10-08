@@ -1,4 +1,4 @@
-package rs.atekom.prati.server;
+package rs.atekom.prati.server.geneko;
 
 import java.sql.Timestamp;
 import java.util.Date;
@@ -7,6 +7,8 @@ import org.joda.time.DateTimeZone;
 import pratiBaza.tabele.Javljanja;
 import pratiBaza.tabele.Objekti;
 import pratiBaza.tabele.SistemAlarmi;
+import rs.atekom.prati.server.OpstiServer;
+import rs.atekom.prati.server.Servis;
 
 public class GenekoProtokol {
 	
