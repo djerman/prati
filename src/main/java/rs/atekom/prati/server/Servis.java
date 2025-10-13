@@ -1,10 +1,5 @@
 package rs.atekom.prati.server;
 
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-
 import javax.servlet.ServletContextEvent;
 import javax.servlet.ServletContextListener;
 import javax.servlet.annotation.WebListener;
@@ -59,7 +54,10 @@ import pratiBaza.servis.VozilaSaobracajneServis;
 import pratiBaza.servis.ObjekatZoneServis;
 import pratiBaza.servis.ZoneServis;
 import rs.atekom.prati.ApplicationContextProvider;
-import rs.atekom.prati.server.updated.OpstiServerUpdate;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import rs.atekom.prati.server.lifecycle.ServerManager;
 
 @WebListener
 public class Servis implements ServletContextListener{
@@ -115,141 +113,220 @@ public class Servis implements ServletContextListener{
 	public static ZoneServis zonaServis;
 
 	public static String apiGoogle;
-	public static GeoApiContext gContext;
-	public static NominatimClient nClient;
-	public static NominatimReverseGeocodingJAPI nominatim;
+	private static GeoApiContext gContext;
+	private static NominatimClient nClient;
+	private static NominatimReverseGeocodingJAPI nominatim;
 	public static Obracuni obracun;
 	public static Mail posta;
 
-	private ExecutorService serverExecutor;
-	private Future<?> neonFuture, nyitechFuture, genekoFuture, ruptelaFuture;
+	// ═══════════════════════════════════════════════════════════
+	// НОВИ ПРИСТУП - ServerManager
+	// ═══════════════════════════════════════════════════════════
 
-	private OpstiServerUpdate ruptela;
-	private OpstiServerUpdate neon;
-	private OpstiServerUpdate geneko;
-	private NyitechServer nyitech;
-	private Thread neonServer, nyitechServer, genekoServer, ruptelaServer;
+	private static final Logger logger = LoggerFactory.getLogger(Servis.class);
+
+	/**
+	 * Централизовани менаџер за све серверске инстанце.
+	 * Управља покретањем, заустављањем и праћењем статуса.
+	 */
+	private ServerManager serverManager;
+
+	/**
+	 * Серверске инстанце - чувамо референце да бисмо их регистровали
+	 */
+	private OpstiServer neonServer;
+	private NyitechServer nyitechServer;
+	private OpstiServer genekoServer;
+	private OpstiServer ruptelaServer;
 
 	@Override
 	public void contextInitialized(ServletContextEvent sce) {
-		context = new ClassPathXmlApplicationContext("applicationContext.xml");
-		alarmKorisnikServis = ApplicationContextProvider.getApplicationContext().getBean("alarmKorisnikServis", AlarmiKorisnikServis.class);
-		evidencijaServis = ApplicationContextProvider.getApplicationContext().getBean("evidencijaServis", EvidencijaVoznjiServis.class);
-		grupeKorisnikServis = ApplicationContextProvider.getApplicationContext().getBean("grupaKorisnikServis", GrupeKorisniciServis.class);
-		grupeObjekatServis = ApplicationContextProvider.getApplicationContext().getBean("grupaObjekatServis", GrupeObjektiServis.class);
-		grupeServis = ApplicationContextProvider.getApplicationContext().getBean("grupaServis", GrupeServis.class);
-		javljanjePoslednjeServis = ApplicationContextProvider.getApplicationContext().getBean("javljanjePoslednjeServis", JavljanjaPoslednjaServis.class);
-		javljanjeMirovanjeServis = ApplicationContextProvider.getApplicationContext().getBean("javljanjeMirovanjeServis", JavljanjaMirovanjaServis.class);
-		javljanjeServis = ApplicationContextProvider.getApplicationContext().getBean("javljanjeServis", JavljanjaServis.class);
-		korisnikServis = ApplicationContextProvider.getApplicationContext().getBean("korisnikServis", KorisniciServis.class);
-		obdServis = ApplicationContextProvider.getApplicationContext().getBean("obdServis", ObdServis.class);
-		obdPoslednjiServis = ApplicationContextProvider.getApplicationContext().getBean("obdPoslednjiServis", ObdPoslednjiServis.class);
-		objekatServis =ApplicationContextProvider.getApplicationContext().getBean("objekatServis", ObjektiServis.class);
-		organizacijaServis = ApplicationContextProvider.getApplicationContext().getBean("organizacijaServis", OrganizacijeServis.class);
-		partnerServis = ApplicationContextProvider.getApplicationContext().getBean("partnerServis", PartneriServis.class);
-		projektServis = ApplicationContextProvider.getApplicationContext().getBean("projektServis", ProjektiServis.class);
-		proceduraServis = ApplicationContextProvider.getApplicationContext().getBean("proceduraServis", ProcedureServis.class);
-		racunServis = ApplicationContextProvider.getApplicationContext().getBean("racunServis", RacuniServis.class);
-		racunRaspodelaServis = ApplicationContextProvider.getApplicationContext().getBean("racunRaspodelaServis", RacuniRaspodelaServis.class);
-		sifraServis = ApplicationContextProvider.getApplicationContext().getBean("sifraServis", SifreServis.class);
-		simServis = ApplicationContextProvider.getApplicationContext().getBean("simServis", SimServis.class);
-		sistemAlarmServis = ApplicationContextProvider.getApplicationContext().getBean("sistemAlarmServis", SistemAlarmiServis.class);
-		sistemGorivoServis = ApplicationContextProvider.getApplicationContext().getBean("sistemGorivoServis", SistemGorivoServis.class);
-		sistemOperaterServis = ApplicationContextProvider.getApplicationContext().getBean("sistemOperaterServis", SistemOperateriServis.class);
-		sistemPretplatnikServis = ApplicationContextProvider.getApplicationContext().getBean("sistemPretplatnikServis", SistemPretplatniciServis.class);
-		sistemServis = ApplicationContextProvider.getApplicationContext().getBean("sistemServis", SistemServis.class);
-		sistemSesijaServis = ApplicationContextProvider.getApplicationContext().getBean("sistemSesijaServis", SistemSesijeServis.class);
-		sistemUredjajModelServis = ApplicationContextProvider.getApplicationContext().getBean("sistemUredjajModelServis", SistemUredjajiModeliServis.class);
-		sistemUredjajProizvodjacServis = ApplicationContextProvider.getApplicationContext().getBean("sistemUredjajProizvodjacServis", SistemUredjajiProizvodjaciServis.class);
-		uredjajServis = ApplicationContextProvider.getApplicationContext().getBean("uredjajServis", UredjajiServis.class);
+	    logger.info("═══════════════════════════════════════════════════════════");
+	    logger.info("  ПОКРЕТАЊЕ АПЛИКАЦИЈЕ - Prati GPS Tracking System");
+	    logger.info("═══════════════════════════════════════════════════════════");
+	    
+	    try {
+	        // ───────────────────────────────────────────────────────
+	        // ШАГ 1: Иницијализација Spring контекста
+	        // ───────────────────────────────────────────────────────
+	        logger.info("Учитавање Spring контекста...");
+	        context = new ClassPathXmlApplicationContext("applicationContext.xml");
+	        
+	        // ───────────────────────────────────────────────────────
+	        // ШАГ 2: Инјектовање свих сервиса (остаје исто као раније)
+	        // ───────────────────────────────────────────────────────
+	        logger.info("Иницијализација сервиса...");
+	        
+	        // ОВДЕ ОСТАЈЕ СВА ПОСТОЈЕЋА ЛОГИКА ЗА СЕРВИСЕ
+	        alarmKorisnikServis = ApplicationContextProvider.getApplicationContext().getBean("alarmKorisnikServis", AlarmiKorisnikServis.class);
+	        evidencijaServis = ApplicationContextProvider.getApplicationContext().getBean("evidencijaServis", EvidencijaVoznjiServis.class);
+	        grupeKorisnikServis = ApplicationContextProvider.getApplicationContext().getBean("grupaKorisnikServis", GrupeKorisniciServis.class);
+	        grupeObjekatServis = ApplicationContextProvider.getApplicationContext().getBean("grupaObjekatServis", GrupeObjektiServis.class);
+	        grupeServis = ApplicationContextProvider.getApplicationContext().getBean("grupaServis", GrupeServis.class);
+	        javljanjePoslednjeServis = ApplicationContextProvider.getApplicationContext().getBean("javljanjePoslednjeServis", JavljanjaPoslednjaServis.class);
+	        javljanjeMirovanjeServis = ApplicationContextProvider.getApplicationContext().getBean("javljanjeMirovanjeServis", JavljanjaMirovanjaServis.class);
+	        javljanjeServis = ApplicationContextProvider.getApplicationContext().getBean("javljanjeServis", JavljanjaServis.class);
+	        korisnikServis = ApplicationContextProvider.getApplicationContext().getBean("korisnikServis", KorisniciServis.class);
+	        obdServis = ApplicationContextProvider.getApplicationContext().getBean("obdServis", ObdServis.class);
+	        obdPoslednjiServis = ApplicationContextProvider.getApplicationContext().getBean("obdPoslednjiServis", ObdPoslednjiServis.class);
+	        objekatServis =ApplicationContextProvider.getApplicationContext().getBean("objekatServis", ObjektiServis.class);
+	        organizacijaServis = ApplicationContextProvider.getApplicationContext().getBean("organizacijaServis", OrganizacijeServis.class);
+	        partnerServis = ApplicationContextProvider.getApplicationContext().getBean("partnerServis", PartneriServis.class);
+	        projektServis = ApplicationContextProvider.getApplicationContext().getBean("projektServis", ProjektiServis.class);
+	        proceduraServis = ApplicationContextProvider.getApplicationContext().getBean("proceduraServis", ProcedureServis.class);
+	        racunServis = ApplicationContextProvider.getApplicationContext().getBean("racunServis", RacuniServis.class);
+	        racunRaspodelaServis = ApplicationContextProvider.getApplicationContext().getBean("racunRaspodelaServis", RacuniRaspodelaServis.class);
+	        sifraServis = ApplicationContextProvider.getApplicationContext().getBean("sifraServis", SifreServis.class);
+	        simServis = ApplicationContextProvider.getApplicationContext().getBean("simServis", SimServis.class);
+	        sistemAlarmServis = ApplicationContextProvider.getApplicationContext().getBean("sistemAlarmServis", SistemAlarmiServis.class);
+	        sistemGorivoServis = ApplicationContextProvider.getApplicationContext().getBean("sistemGorivoServis", SistemGorivoServis.class);
+	        sistemOperaterServis = ApplicationContextProvider.getApplicationContext().getBean("sistemOperaterServis", SistemOperateriServis.class);
+	        sistemPretplatnikServis = ApplicationContextProvider.getApplicationContext().getBean("sistemPretplatnikServis", SistemPretplatniciServis.class);
+	        sistemServis = ApplicationContextProvider.getApplicationContext().getBean("sistemServis", SistemServis.class);
+	        sistemSesijaServis = ApplicationContextProvider.getApplicationContext().getBean("sistemSesijaServis", SistemSesijeServis.class);
+	        sistemUredjajModelServis = ApplicationContextProvider.getApplicationContext().getBean("sistemUredjajModelServis", SistemUredjajiModeliServis.class);
+	        sistemUredjajProizvodjacServis = ApplicationContextProvider.getApplicationContext().getBean("sistemUredjajProizvodjacServis", SistemUredjajiProizvodjaciServis.class);
+	        uredjajServis = ApplicationContextProvider.getApplicationContext().getBean("uredjajServis", UredjajiServis.class);
 
-		vozacServis = ApplicationContextProvider.getApplicationContext().getBean("vozacServis", VozaciServis.class);
-		dozvolaServis = ApplicationContextProvider.getApplicationContext().getBean("vozacDozvolaServis", VozaciDozvoleServis.class);
-		lekarskoServis = ApplicationContextProvider.getApplicationContext().getBean("vozacLekarskoServis", VozaciLekarskoServis.class);
-		licencaServis = ApplicationContextProvider.getApplicationContext().getBean("vozacLicencaServis", VozaciLicenceServis.class);
-		licnaServis = ApplicationContextProvider.getApplicationContext().getBean("vozacLicnaServis", VozaciLicnaServis.class);
-		pasosServis = ApplicationContextProvider.getApplicationContext().getBean("vozacPasosServis", VozaciPasosiServis.class);
+	        vozacServis = ApplicationContextProvider.getApplicationContext().getBean("vozacServis", VozaciServis.class);
+	        dozvolaServis = ApplicationContextProvider.getApplicationContext().getBean("vozacDozvolaServis", VozaciDozvoleServis.class);
+	        lekarskoServis = ApplicationContextProvider.getApplicationContext().getBean("vozacLekarskoServis", VozaciLekarskoServis.class);
+	        licencaServis = ApplicationContextProvider.getApplicationContext().getBean("vozacLicencaServis", VozaciLicenceServis.class);
+	        licnaServis = ApplicationContextProvider.getApplicationContext().getBean("vozacLicnaServis", VozaciLicnaServis.class);
+	        pasosServis = ApplicationContextProvider.getApplicationContext().getBean("vozacPasosServis", VozaciPasosiServis.class);
 
-		voziloServis = ApplicationContextProvider.getApplicationContext().getBean("voziloServis", VozilaServis.class);
-		nalogServis = ApplicationContextProvider.getApplicationContext().getBean("voziloNalogServis", VozilaNaloziServis.class);
-		opremaServis = ApplicationContextProvider.getApplicationContext().getBean("voziloOpremaServis", VozilaOpremaServis.class);
-		opremaPrijemServis = ApplicationContextProvider.getApplicationContext().getBean("voziloOpremaPrijemServis", VozilaOpremaPrijemServis.class);
-		primoPredajaServis = ApplicationContextProvider.getApplicationContext().getBean("voziloPrimoPredajaServis", VozilaPrimoPredajeServis.class);
-		trosakServis = ApplicationContextProvider.getApplicationContext().getBean("trosakServis", TroskoviServis.class);
-		saobracajnaServis = ApplicationContextProvider.getApplicationContext().getBean("saobracajnaServis", VozilaSaobracajneServis.class);
-		saobracajna2Servis = ApplicationContextProvider.getApplicationContext().getBean("saobracajna2Servis", VozilaSaobracajne2Servis.class);
+	        voziloServis = ApplicationContextProvider.getApplicationContext().getBean("voziloServis", VozilaServis.class);
+	        nalogServis = ApplicationContextProvider.getApplicationContext().getBean("voziloNalogServis", VozilaNaloziServis.class);
+	        opremaServis = ApplicationContextProvider.getApplicationContext().getBean("voziloOpremaServis", VozilaOpremaServis.class);
+	        opremaPrijemServis = ApplicationContextProvider.getApplicationContext().getBean("voziloOpremaPrijemServis", VozilaOpremaPrijemServis.class);
+	        primoPredajaServis = ApplicationContextProvider.getApplicationContext().getBean("voziloPrimoPredajaServis", VozilaPrimoPredajeServis.class);
+	        trosakServis = ApplicationContextProvider.getApplicationContext().getBean("trosakServis", TroskoviServis.class);
+	        saobracajnaServis = ApplicationContextProvider.getApplicationContext().getBean("saobracajnaServis", VozilaSaobracajneServis.class);
+	        saobracajna2Servis = ApplicationContextProvider.getApplicationContext().getBean("saobracajna2Servis", VozilaSaobracajne2Servis.class);
 
-		zonaObjekatServis = ApplicationContextProvider.getApplicationContext().getBean("zonaObjekatServis", ObjekatZoneServis.class);
-		zonaServis = ApplicationContextProvider.getApplicationContext().getBean("zonaServis", ZoneServis.class);
-
-		apiGoogle = sistemServis.vratiSistem().getApi();
-		gContext = new GeoApiContext().setApiKey(apiGoogle);
-		nClient = new NominatimClient(sistemServis.vratiSistem().getEmailVlasnika(), sistemServis.vratiSistem().getNominatimAdresa());
-		nominatim = new NominatimReverseGeocodingJAPI(sistemServis.vratiSistem().getNominatimAdresa());
-		obracun = new Obracuni();
-		posta = new Mail(sistemServis.vratiSistem().getEmailServer(), String.valueOf(sistemServis.vratiSistem().getEmailServerPort()), 
-				sistemServis.vratiSistem().getEmailKorisnik(), sistemServis.vratiSistem().getEmailLozinka());
-
-		try {
-			// === START of server startup (updated) ===
-			// NOTE: original code created Threads directly for each server.
-			// To make startup non-invasive and reversible, we keep the server instances
-			// but submit them to a dedicated ExecutorService. This allows easier control,
-			// graceful shutdown and limits the number of raw Threads created.
-			// Original Thread creation is left commented below for quick rollback.
-			neon = new OpstiServerUpdate(9000, 100);//76 aktivnih 2021-01-08
-			nyitech = new NyitechServer(9010, 20);//7 aktivnih 2021-01-08
-			geneko = new OpstiServerUpdate(9030, 20);//12 aktivnih 2021-01-08
-			ruptela = new OpstiServerUpdate(9040, 200);//58 aktivnih 2021-01-08
-
-			//neonServer = new Thread(neon);
-			//nyitechServer = new Thread(nyitech);
-			//genekoServer = new Thread(geneko);
-			//ruptelaServer = new Thread(ruptela);
-
-			//neonServer.start();
-			//nyitechServer.start();
-			//genekoServer.start();
-			//ruptelaServer.start();
-			// Create single executor to host the server runnables (one thread per server instance)
-			serverExecutor = Executors.newFixedThreadPool(4, Executors.defaultThreadFactory());
-			// Submit server runnables (OpstiServer / NyitechServer implement Runnable)
-			neonFuture = serverExecutor.submit(neon);
-			nyitechFuture = serverExecutor.submit(nyitech);
-			genekoFuture = serverExecutor.submit(geneko);
-			ruptelaFuture = serverExecutor.submit(ruptela);
-			// === END of server startup (updated) ===
-		} catch (Throwable e) {
-			System.out.println("error starting servers " + e.getMessage());
-			return;
-		}
+	        zonaObjekatServis = ApplicationContextProvider.getApplicationContext().getBean("zonaObjekatServis", ObjekatZoneServis.class);
+	        zonaServis = ApplicationContextProvider.getApplicationContext().getBean("zonaServis", ZoneServis.class);
+	        
+	        logger.info("Сервиси учитани");
+	        
+	        // ───────────────────────────────────────────────────────
+	        // ШАГ 3: Иницијализација помоћних компоненти
+	        // ───────────────────────────────────────────────────────
+	        logger.info("Конфигурација спољних сервиса...");
+	        
+	        apiGoogle = sistemServis.vratiSistem().getApi();
+	        //gContext = new GeoApiContext().setApiKey(apiGoogle);
+	        //nClient = new NominatimClient(sistemServis.vratiSistem().getEmailVlasnika(), sistemServis.vratiSistem().getNominatimAdresa());
+	        //nominatim = new NominatimReverseGeocodingJAPI(sistemServis.vratiSistem().getNominatimAdresa());
+	        obracun = new Obracuni();
+	        posta = new Mail(sistemServis.vratiSistem().getEmailServer(), String.valueOf(sistemServis.vratiSistem().getEmailServerPort()), 
+	                sistemServis.vratiSistem().getEmailKorisnik(), sistemServis.vratiSistem().getEmailLozinka());
+	        
+	        logger.info("Спољни сервиси конфигурисани");
+	        
+	        // ───────────────────────────────────────────────────────
+	        // ШАГ 4: НОВА ЛОГИКА - Креирање и покретање TCP сервера
+	        // ───────────────────────────────────────────────────────
+	        logger.info("Иницијализација TCP сервера...");
+	        
+	        // Креирамо ServerManager
+	        serverManager = new ServerManager();
+	        
+	        // Креирамо серверске инстанце
+	        neonServer = new OpstiServer(9000, 100);      // 76 активних (2021-01-08)
+	        nyitechServer = new NyitechServer(9010, 20);  // 7 активних (застарео)
+	        genekoServer = new OpstiServer(9030, 20);     // 12 активних
+	        ruptelaServer = new OpstiServer(9040, 200);   // 58 активних, растући!
+	        
+	        // Региструјемо серверe у менаџеру
+	        serverManager.registerServer("NEON", neonServer, 9000);
+	        serverManager.registerServer("NYITECH", nyitechServer, 9010);
+	        serverManager.registerServer("GENEKO", genekoServer, 9030);
+	        serverManager.registerServer("RUPTELA", ruptelaServer, 9040);
+	        
+	        // Покрећемо све серверe одједном
+	        serverManager.startAll();
+	        
+	        logger.info("  TCP сервери покренути");
+	        
+	        logger.info("═══════════════════════════════════════════════════════════");
+	        logger.info("  АПЛИКАЦИЈА УСПЕШНО ПОКРЕНУТА");
+	        logger.info("═══════════════════════════════════════════════════════════");
+	        
+	    } catch (Throwable e) {
+	        logger.error("═══════════════════════════════════════════════════════════");
+	        logger.error("  КРИТИЧНА ГРЕШКА ПРИ ПОКРЕТАЊУ");
+	        logger.error("═══════════════════════════════════════════════════════════");
+	        logger.error("Детаљи грешке:", e);
+	        
+	        // У случају грешке, покушавамо да зауставимо оно што је покренуто
+	        if (serverManager != null) {
+	            serverManager.stopAll();
+	        }
+	        
+	        throw new RuntimeException("Неуспешно покретање апликације", e);
+	    }
 	}
 
 	@Override
 	public void contextDestroyed(ServletContextEvent sce) {
-		serverExecutor.shutdown();
-		try {
-			if (!serverExecutor.awaitTermination(10, TimeUnit.SECONDS)) {
-				serverExecutor.shutdownNow();
-			}
-		} catch (InterruptedException e) {
-			// TODO Auto-generated catch block
-			e.printStackTrace();
-		}
-
-		context = null;
-		if(neonServer != null) {
-			neon.stop();
-		}
-		if(nyitechServer != null) {
-			nyitech.stop();
-		}
-		if(genekoServer != null) {
-			geneko.stop();
-		}
-		if(ruptelaServer != null) {
-			ruptela.stop();
-		}
+	    logger.info("═══════════════════════════════════════════════════════════");
+	    logger.info("  ЗАУСТАВЉАЊЕ АПЛИКАЦИЈЕ");
+	    logger.info("═══════════════════════════════════════════════════════════");
+	    
+	    try {
+	        // Заустављање свих TCP сервера преко ServerManager-а
+	        if (serverManager != null && serverManager.isRunning()) {
+	            logger.info("→ Заустављање TCP сервера...");
+	            serverManager.stopAll();
+	        } else {
+	            logger.warn("ServerManager није активан");
+	        }
+	        
+	        // Cleanup Spring контекста
+	        context = null;
+	        
+	        logger.info("═══════════════════════════════════════════════════════════");
+	        logger.info("  АПЛИКАЦИЈА УСПЕШНО ЗАУСТАВЉЕНА");
+	        logger.info("═══════════════════════════════════════════════════════════");
+	        
+	    } catch (Throwable e) {
+	        logger.error("Грешка при заустављању апликације", e);
+	    }
 	}
 
+    public static synchronized GeoApiContext ensureGContext() {
+        if (gContext == null) {
+            String key = (apiGoogle != null) ? apiGoogle : 
+                         (sistemServis != null && sistemServis.vratiSistem() != null 
+                          ? sistemServis.vratiSistem().getApi() : null);
+            if (key == null || key.isEmpty()) {
+                throw new IllegalStateException("GOOGLE API key nije postavljen");
+            }
+            gContext = new GeoApiContext().setApiKey(key);
+        }
+        return gContext;
+    }
+
+    public static synchronized NominatimClient ensureNClient() {
+        if (nClient == null) {
+            String email = (sistemServis != null && sistemServis.vratiSistem() != null)
+                    ? sistemServis.vratiSistem().getEmailVlasnika() : "prati@atekom.rs";
+            String base  = (sistemServis != null && sistemServis.vratiSistem() != null)
+                    ? sistemServis.vratiSistem().getNominatimAdresa() : null;
+            if (base == null || base.isEmpty()) base = "https://nominatim.openstreetmap.org";
+            nClient = new NominatimClient(email, base);
+        }
+        return nClient;
+    }
+
+    public static synchronized NominatimReverseGeocodingJAPI ensureNominatimJson() {
+        if (nominatim == null) {
+            String base  = (sistemServis != null && sistemServis.vratiSistem() != null)
+                    ? sistemServis.vratiSistem().getNominatimAdresa() : null;
+            if (base == null || base.isEmpty()) base = "https://nominatim.openstreetmap.org";
+            nominatim = new NominatimReverseGeocodingJAPI(base);
+        }
+        return nominatim;
+    }
 }

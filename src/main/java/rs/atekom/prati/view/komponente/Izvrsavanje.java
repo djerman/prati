@@ -47,59 +47,73 @@ public class Izvrsavanje {
 	}
 	
 	private void alarmAdresa(Javljanja javljanje) {
-    	String adresa = "";
-    	LatLng pozicija;
-    	String apiPretplatnik = javljanje.getObjekti().getSistemPretplatnici() == null ? "": javljanje.getObjekti().getSistemPretplatnici().getApiKey();
-		if(!javljanje.getSistemAlarmi().getSifra().equals("0") && (javljanje.getLat() != 0.00 && javljanje.getLon() != 0.00)){
-			if(javljanje.getSistemAlarmi().isAdresa()){
-				try {
-					if(!apiPretplatnik.isEmpty() && !apiPretplatnik.equals("") && apiPretplatnik != null) {
-						GeoApiContext gContext = new GeoApiContext().setApiKey(apiPretplatnik);
-						pozicija = new LatLng(javljanje.getLat(), javljanje.getLon());
-						GeocodingResult[] adresaTrazena= GeocodingApi.reverseGeocode(gContext, pozicija).await();
-						adresa = adresaTrazena[0].formattedAddress;
-					}else {
-						Address adressa = Servis.nominatim.getAdress(javljanje.getLat(), javljanje.getLon());
-						if(adressa != null){
-							if(!adressa.getHouseNumber().equals(""))
-								adresa = adressa.getHouseNumber() + ", ";
-							if(!adressa.getRoad().equals(""))
-								adresa = adresa + adressa.getRoad() + ", ";
-							if(!adressa.getSuburb().equals(""))
-								adresa = adresa + adressa.getSuburb() + ", ";
-							if(!adressa.getCity().equals(""))
-								adresa = adresa + adressa.getCity() + " ";
-							if(!adressa.getPostcode().equals(""))
-								adresa = adresa + adressa.getPostcode();
-							if(!adressa.getCounty().equals(""))
-								adresa = adresa + ", " + adressa.getCounty() + ", ";
-							if(!adressa.getCountry().equals(""))
-								adresa = adresa + adressa.getCountry();
-							}else{
-								try {
-									pozicija = new LatLng(javljanje.getLat(), javljanje.getLon());
-									GeocodingResult[] adresaTrazena = GeocodingApi.reverseGeocode(Servis.gContext, pozicija).await();
-									adresa = adresaTrazena[0].formattedAddress;
-									}catch (Exception e) {
-										adresa = "";
-										System.err.println("google adrese grešaka - komponente.izvrsavanje klasa");
-										}
-								}
-						if(javljanje.getEventData().equals("0")){
-							javljanje.setEventData(adresa);
-							}else{
-								javljanje.setEventData(javljanje.getEventData() + " " + adresa);
-								if(javljanje.getEventData().length() > 250){
-									javljanje.setEventData(adresa);
-									} 
-								}
-						}
-					} catch (Exception e) {
-						System.out.println("Problem sa adresama... ");	
-						}
-				}
-			}
+	    if (javljanje == null || javljanje.getSistemAlarmi() == null) return;
+	    if ("0".equals(javljanje.getSistemAlarmi().getSifra())) return;
+	    double lat = javljanje.getLat(), lon = javljanje.getLon();
+	    if (lat == 0.0 || lon == 0.0) return;
+
+	    String adresa = "";
+	    try {
+	        if (javljanje.getSistemAlarmi().isAdresa()) {
+	            // 1) Google (globalni ključ iz Servis.ensureGContext)
+	            try {
+	                GeoApiContext gctx = Servis.ensureGContext();
+	                LatLng poz = new LatLng(lat, lon);
+	                GeocodingResult[] r = GeocodingApi.reverseGeocode(gctx, poz).await();
+	                if (r != null && r.length > 0 && r[0] != null && r[0].formattedAddress != null) {
+	                    adresa = r[0].formattedAddress;
+	                }
+	            } catch (Exception ge) {
+	                System.err.println("[alarmAdresa] Google error: " + ge.getMessage());
+	            }
+
+	            // 2) Ako nema Google adrese → Nominatim JSON
+	            if (adresa.isEmpty()) {
+	                try {
+	                    Address a = Servis.ensureNominatimJson().getAdress(lat, lon);
+	                    if (a != null) {
+	                        StringBuilder sb = new StringBuilder();
+	                        if (!a.getHouseNumber().isEmpty()) sb.append(a.getHouseNumber()).append(", ");
+	                        if (!a.getRoad().isEmpty())        sb.append(a.getRoad()).append(", ");
+	                        if (!a.getSuburb().isEmpty())      sb.append(a.getSuburb()).append(", ");
+	                        if (!a.getCity().isEmpty())        sb.append(a.getCity()).append(' ');
+	                        if (!a.getPostcode().isEmpty())    sb.append(a.getPostcode());
+	                        if (!a.getCounty().isEmpty())      sb.append(", ").append(a.getCounty()).append(", ");
+	                        if (!a.getCountry().isEmpty())     sb.append(a.getCountry());
+	                        adresa = sb.toString().trim();
+	                    }
+	                } catch (Exception ne) {
+	                    System.err.println("[alarmAdresa] Nominatim JSON error: " + ne.getMessage());
+	                }
+	            }
+
+	            // 3) Ako i dalje prazno → NominatimClient
+	            if (adresa.isEmpty()) {
+	                try {
+	                    adresa = Servis.ensureNClient().getAddress(lat, lon);
+	                    if (adresa == null) adresa = "";
+	                } catch (Exception ce) {
+	                    System.err.println("[alarmAdresa] NominatimClient error: " + ce.getMessage());
+	                }
+	            }
+
+	            // 4) Upis u eventData
+	            if (!adresa.isEmpty()) {
+	                String cur = javljanje.getEventData();
+	                if (cur == null || cur.isBlank() || "0".equals(cur)) {
+	                    javljanje.setEventData(adresa);
+	                } else {
+	                    String novo = (cur + " " + adresa).trim();
+	                    javljanje.setEventData(novo.length() > 250 ? adresa : novo);
+	                }
+	            }
+	        }
+	    } catch (Exception e) {
+	        System.err.println("[alarmAdresa] Neočekivana greška: " + e.getMessage());
+	    }
 	}
+
+
 	
     public long razlika(Date vreme){
     	return System.currentTimeMillis() - vreme.getTime();

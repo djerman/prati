@@ -141,10 +141,10 @@ public class RutaView extends OpstiView implements OpstiViewInterface{
 		List<LatLng> latLng = new ArrayList<LatLng>();
 		
 		try {
-			GeocodingResult[] adresaTrazena = GeocodingApi.reverseGeocode(Servis.gContext, pozicija).await();
+			GeocodingResult[] adresaTrazena = GeocodingApi.reverseGeocode(Servis.ensureGContext(), pozicija).await();
 			String adresaPocetna = adresaTrazena[0].formattedAddress;
 			DirectionsResult result = new DirectionsResult();
-			result = DirectionsApi.newRequest(Servis.gContext)
+			result = DirectionsApi.newRequest(Servis.ensureGContext())
 			        .origin(adresaPocetna)
 			        .destination(odrediste)
 			        .language("serbian")

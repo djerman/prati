@@ -5,12 +5,15 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.atomic.AtomicInteger;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import pratiBaza.tabele.Javljanja;
@@ -24,15 +27,19 @@ import rs.atekom.prati.server.ruptela.RuptelaProtokol;
 import rs.atekom.prati.view.komponente.Izvrsavanje;
 
 @Service
-public class OpstiServer implements Runnable{
+public class OpstiServer implements Runnable {
+
+	// ДОДАЈТЕ LOGGER
+	private static final Logger logger = LoggerFactory.getLogger(OpstiServer.class);
 
 	private final int listeningPort;
 	private ServerSocket serverSocket;
 	private final ExecutorService pool;
-	private ArrayList<Socket> clientSockets;
+	private final ConcurrentHashMap<String, Socket> clientSockets;
+	private final AtomicInteger connectionCounter;
 	private boolean isStopped = false;
 	private int poolSize;
-	private int rb = 1;
+	
 	public SistemAlarmi prekoracenjeBrzine, stajanje, istakanje, izlazak, ulazak, redovno;
 	public NeonProtokol nProtokol;
 	public RuptelaProtokol rProtokol;
@@ -41,142 +48,243 @@ public class OpstiServer implements Runnable{
 	private String server;
 	
 	public OpstiServer(int port, int poolSizeS) {
-		clientSockets = new ArrayList<Socket>();
+		clientSockets = new ConcurrentHashMap<>();
+		connectionCounter = new AtomicInteger(0);
+		
 		listeningPort = port;
 		poolSize = poolSizeS;
 		pool = Executors.newFixedThreadPool(poolSize);
+		
 		switch (listeningPort) {
-		case 9000: nProtokol = new NeonProtokol(this);
-                   server = " NEON ";
-	        break;
-		case 9030: gProtokol = new GenekoProtokol(this);
-                   server = " GENEKO ";
-            break;
-		case 9040: rProtokol = new RuptelaProtokol();
-		           server = " RUPTELA ";
+		case 9000: 
+			nProtokol = new NeonProtokol(this);
+			server = "NEON";
 			break;
-
+		case 9030: 
+			gProtokol = new GenekoProtokol(this);
+			server = "GENEKO";
+			break;
+		case 9040: 
+			rProtokol = new RuptelaProtokol();
+			server = "RUPTELA";
+			break;
 		default:
+			server = "TEST";
 			break;
 		}
-		prekoracenjeBrzine = Servis.sistemAlarmServis.nadjiAlarmPoSifri("6013");
-		stajanje = Servis.sistemAlarmServis.nadjiAlarmPoSifri("1095");
-		istakanje = Servis.sistemAlarmServis.nadjiAlarmPoSifri("1111");
-		izlazak = Servis.sistemAlarmServis.nadjiAlarmPoSifri("1100");
-		ulazak = Servis.sistemAlarmServis.nadjiAlarmPoSifri("1101");
-		redovno = Servis.sistemAlarmServis.nadjiAlarmPoSifri("0");
+		
+		// Иницијализација аларма са null провером
+		try {
+			if (Servis.sistemAlarmServis != null) {
+				prekoracenjeBrzine = Servis.sistemAlarmServis.nadjiAlarmPoSifri("6013");
+				stajanje = Servis.sistemAlarmServis.nadjiAlarmPoSifri("1095");
+				istakanje = Servis.sistemAlarmServis.nadjiAlarmPoSifri("1111");
+				izlazak = Servis.sistemAlarmServis.nadjiAlarmPoSifri("1100");
+				ulazak = Servis.sistemAlarmServis.nadjiAlarmPoSifri("1101");
+				redovno = Servis.sistemAlarmServis.nadjiAlarmPoSifri("0");
+			} else {
+				logger.warn("Alarmi nisu dostupni (test okruženje)");
+			}
+		} catch (Exception e) {
+			logger.error("Greška pri inicijalizaciji alarma", e);
+		}
+		
 		izvrsavanje = new Izvrsavanje();
+		
+		logger.info("OpstiServer [{}] inicijalizovan na portu {}", server, port);
 	}
 	
 	@Override
 	public void run() {
 		LinkedBlockingQueue<Socket> queue = new LinkedBlockingQueue<>();
-	     System.out.println(server);
-	     try {
-	    	 serverSocket = new ServerSocket(listeningPort);
-	    	 while(!isStopped()) {
-	    		 Socket soket = null;
-	    		 try {
-	    			 /*if(clientSockets.size() >= (poolSize - 2)) {
-	    				 clientSockets.get(0).getInputStream().close();
-	    				 clientSockets.get(0).close();
-	    				 removeClientSocket(clientSockets.get(0));
-	    				 System.out.println("server " + server + " izbačen soket - " + clientSockets.size());
-	    				 }**/
-	    			 /*int brUklonjenihSoketa = 0;
-	    			 for(Socket sok : clientSockets) {
-	    				 if(sok.isClosed()) {
-	    					 clientSockets.remove(sok);
-	    					 removeClientSocket(sok);
-	    					 brUklonjenihSoketa++;
-	    				 }
-	    			 }**/
-	    			 
-	    			 soket = serverSocket.accept();
-	    			 clientSockets.add(soket);
-	    			 
-	    			 switch (listeningPort) {
-	    			 case 9000: pool.submit(new NeonOpstiThread(queue, this));
-	    			    break;
-	    			 case 9030: pool.submit(new GenekoOpstiThread(queue, this));
-	    			    break;
-	    			 case 9040: pool.submit(new RuptelaOpstiThread(queue, this));
-	    			    break;
-	    			 default:
+		logger.info("→ Pokretanje {} TCP servera...", server);
+		
+		try {
+			serverSocket = new ServerSocket(listeningPort);
+			logger.info(" {} server pokrenut i sluša na portu {}", server, listeningPort);
+			
+			while(!isStopped()) {
+				Socket soket = null;
+				try {
+					soket = serverSocket.accept();
+					
+					// Генеришемо јединствени ID за конекцију
+					int connectionId = connectionCounter.incrementAndGet();
+					String clientId = server + "-" + connectionId;
+					
+					// Thread-safe додавање у мапу
+					clientSockets.put(clientId, soket);
+					
+					switch (listeningPort) {
+					case 9000: 
+						pool.submit(new NeonOpstiThread(queue, this));
 						break;
-						}
-	    			 queue.put(soket);
-	    			 
-	    			 /*if(clientSockets.size() % 100 == 0) {
-	    				 System.out.println("server " + server + " izbačenih soketa - " + brUklonjenihSoketa + " ukupno ostalo " + clientSockets.size());
-	    			 }**/
-	    			 
-	    			 if(rb == 1 || rb % 1000 == 0) {
-	    				 System.out.println();
-	    				 System.out.println("************************************************************");
-	    				 System.out.println(server + rb + " STARTOVAN" + " od " + ((ThreadPoolExecutor) pool).getActiveCount() + " " + getVreme() + " *****");
-	    				 System.out.println("************************************************************");
-	    				 System.out.println();
-	    				 }
-	    			 rb++;
-	    			 } catch (Throwable e){
-	    				 if (isStopped()) {
-	    					 System.out.println("server " + server + "is stopped");
-	    					 System.out.println(e.getMessage());
-	    					 } else {
-	    						 System.out.println("error accepting" + server + "client connection" + e.getMessage());
-	    						 e.printStackTrace();
-	    						 }
-	    				 break;
-	    				 }
-	    		 }
-				/*try{
-					this.pool.shutdown();
-		     	   for(Socket s: clientSockets){
-		     		   try{
-		     			   s.close();
-		     			   }catch (Throwable e){
-		     				   System.out.println("soket neon zatvoren: " + e.getMessage());
-		     				   }
-		     		   }
-		     	   }catch(Throwable e){
-		     		   System.out.println("shutdown neon: " + e.getMessage());
-		     		   }**/
-	    	 } catch (IOException ex) {
-	    		 System.out.println("greška otvaranja" + server + "soketa: " + ex.getMessage());
-	    		 }
-	     }
+					case 9030: 
+						pool.submit(new GenekoOpstiThread(queue, this));
+						break;
+					case 9040: 
+						pool.submit(new RuptelaOpstiThread(queue, this));
+						break;
+					default:
+						break;
+					}
+					
+					queue.put(soket);
+					
+					// Логовање на сваку 1000-ту конекцију
+					if(connectionId == 1 || connectionId % 1000 == 0) {
+						logger.info("═══════════════════════════════════════════════════");
+						logger.info("{} | Konakcija #{} | Aktivnih thread-ova: {} | Ukupno klijenata: {} | {}", 
+						            server, connectionId, 
+						            ((ThreadPoolExecutor) pool).getActiveCount(),
+						            clientSockets.size(),
+						            getVreme());
+						logger.info("═══════════════════════════════════════════════════");
+					}
+					
+					// Debug logging za svaku konakciju (može se isključiti u production)
+					if (connectionId <= 10 || connectionId % 100 == 0) {
+						logger.debug("Novi {} klijent prihvaćen: {} | Total: {}", 
+						             server, clientId, clientSockets.size());
+					}
+					
+				} catch (Throwable e) {
+					if (isStopped()) {
+						logger.info("Server {} zaustavljan - prekid accept petlje", server);
+					} else {
+						logger.error("Greška prihvatanja {} klijentske konekcije", server, e);
+					}
+					break;
+				}
+			}
+		} catch (IOException ex) {
+			logger.error("Greška otvaranja {} server socket-a na portu {}", 
+			             server, listeningPort, ex);
+		} finally {
+			logger.info("Server {} napušta run petlju", server);
+		}
+	}
 
 	
 	private synchronized boolean isStopped() {
 		return this.isStopped;
-		}
+	}
 	
 	public synchronized void stop() {
+		logger.info("═══════════════════════════════════════════════════");
+		logger.info("  Zaustavljanje {} servera...", server);
+		logger.info("═══════════════════════════════════════════════════");
+		
 		isStopped = true;
-		try {
-			serverSocket.close();
-			} catch (Throwable e) {
-				System.out.println("error stopping server " + server + e.getMessage());
+		
+		// Затварамо све client socket-е
+		int clientCount = clientSockets.size();
+		if (clientCount > 0) {
+			logger.info("→ Zatvaranje {} klijentskih konekcija...", clientCount);
+			
+			int closed = 0;
+			for (Socket socket : clientSockets.values()) {
+				try {
+					if (socket != null && !socket.isClosed()) {
+						socket.close();
+						closed++;
+					}
+				} catch (IOException e) {
+					logger.warn("Greška zatvaranja client socket-a: {}", e.getMessage());
 				}
+			}
+			
+			clientSockets.clear();
+			logger.info("✓ Zatvoreno {}/{} klijentskih socket-a", closed, clientCount);
 		}
+		
+		// Затварамо server socket
+		try {
+			if (serverSocket != null && !serverSocket.isClosed()) {
+				serverSocket.close();
+				logger.info("✓ Server socket zatvoren");
+			}
+		} catch (IOException e) {
+			logger.error("Greška zatvaranja server socket-a", e);
+		}
+		
+		// Shutdown thread pool
+		pool.shutdown();
+		try {
+			if (!pool.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)) {
+				pool.shutdownNow();
+				logger.warn("Thread pool forcefully zaustavljen nakon timeout-a");
+			} else {
+				logger.info("✓ Thread pool čisto zaustavljen");
+			}
+		} catch (InterruptedException e) {
+			pool.shutdownNow();
+			Thread.currentThread().interrupt();
+			logger.warn("Thread pool shutdown prekinut");
+		}
+		
+		logger.info("═══════════════════════════════════════════════════");
+		logger.info("  ✓ Server {} uspešno zaustavljen", server);
+		logger.info("═══════════════════════════════════════════════════");
+	}
 	
+	/**
+	 * Уклања client socket по ID-у
+	 */
+	public void removeClientSocket(String clientId) {
+		Socket socket = clientSockets.remove(clientId);
+		if (socket != null) {
+			try {
+				if (!socket.isClosed()) {
+					socket.close();
+				}
+				logger.debug("Klijent {} otkačen i socket zatvoren", clientId);
+			} catch (IOException e) {
+				logger.warn("Greška zatvaranja socket-a {}: {}", clientId, e.getMessage());
+			}
+		}
+	}
+	
+	/**
+	 * Стара метода - deprecated
+	 * @deprecated Koristite {@link #removeClientSocket(String)}
+	 */
+	@Deprecated
 	public synchronized void removeClientSocket(Socket clientSocket) {
 		try {
-			clientSockets.remove(clientSocket);
-			} catch (Throwable e) {
-				System.out.println("error removing" + server + "socket" + e.getMessage());
-				}
+			clientSockets.entrySet().removeIf(entry -> entry.getValue().equals(clientSocket));
+			
+			if (clientSocket != null && !clientSocket.isClosed()) {
+				clientSocket.close();
+			}
+			logger.debug("Client socket uklonjen (deprecated method)");
+		} catch (Throwable e) {
+			logger.warn("Greška uklanjanja {} socket-a", server, e);
 		}
+	}
 	
+	/**
+	 * Враћа број активних клијената
+	 */
+	public int getActiveClientCount() {
+		return clientSockets.size();
+	}
+	
+	/**
+	 * Проверава да ли клијент постоји
+	 */
+	public boolean hasClient(String clientId) {
+		return clientSockets.containsKey(clientId);
+	}
+    
     public String getVreme() {
     	return LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS"));
-    	}
+    }
     
     public void postaviAlarmStajanje(Javljanja javljanje) {
     	if(stajanje != null && stajanje.isAktivan()) {
         	javljanje.setSistemAlarmi(stajanje);
-    	}else {
+    	} else {
     		if(redovno != null) {
     			javljanje.setSistemAlarmi(redovno);
     		}
@@ -186,7 +294,7 @@ public class OpstiServer implements Runnable{
     public void postaviAlarmPrekoracenjeBrzine(Javljanja javljanje) {
     	if(prekoracenjeBrzine != null && prekoracenjeBrzine.isAktivan()) {
         	javljanje.setSistemAlarmi(prekoracenjeBrzine);
-    	}else {
+    	} else {
     		if(redovno != null) {
     			javljanje.setSistemAlarmi(redovno);
     		}
@@ -196,7 +304,7 @@ public class OpstiServer implements Runnable{
     public void postaviAlarmIstakanje(Javljanja javljanje) {
     	if(istakanje != null && istakanje.isAktivan()) {
         	javljanje.setSistemAlarmi(istakanje);
-    	}else {
+    	} else {
     		if(redovno != null) {
     			javljanje.setSistemAlarmi(redovno);
     		}
@@ -206,16 +314,17 @@ public class OpstiServer implements Runnable{
     public void postaviAlarmIzlazakIzZone(Javljanja javljanje) {
     	if(izlazak != null && izlazak.isAktivan()) {
         	javljanje.setSistemAlarmi(izlazak);
-    	}else {
+    	} else {
     		if(redovno != null) {
     			javljanje.setSistemAlarmi(redovno);
     		}
     	}
     }
+    
     public void postaviAlarmUlazakUZonu(Javljanja javljanje) {
     	if(ulazak != null && ulazak.isAktivan()) {
         	javljanje.setSistemAlarmi(ulazak);
-    	}else {
+    	} else {
     		if(redovno != null) {
     			javljanje.setSistemAlarmi(redovno);
     		}

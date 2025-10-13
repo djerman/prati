@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.Socket;
+import java.net.SocketException;
 import java.sql.Timestamp;
 import java.text.DateFormat;
 import java.text.ParseException;
@@ -11,6 +12,10 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.concurrent.LinkedBlockingQueue;
+
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import pratiBaza.tabele.AlarmiKorisnik;
 import pratiBaza.tabele.Javljanja;
 import pratiBaza.tabele.JavljanjaMirovanja;
@@ -21,320 +26,489 @@ import pratiBaza.tabele.Objekti;
 import pratiBaza.tabele.Uredjaji;
 import pratiBaza.tabele.Zone;
 
-public class OpstiThread implements Runnable{
+public abstract class OpstiThread implements Runnable {
 
-	public Socket socket = null;
-	public LinkedBlockingQueue<Socket> socketQueue;
-	public InputStream input;
-    public OutputStream out;
-    public boolean isStopped = false;
-    public boolean prekoracenje = false;
-    public byte[] data;
-    public byte[] odg = {(byte)0x00, (byte)0x02, (byte)0x64, (byte)0x01, (byte)0x13, (byte)0xbc};
-    public int offset;
-    public OpstiServer server;
-    public ArrayList<ObjekatZone> objekatZone;
-    public ArrayList<AlarmiKorisnik> alarmiKorisnici;
-    public String testDate;
-    public DateFormat formatter;
-    public Date date;
-    public JavljanjeObd javljanjeObd;
-    public Obd obdStop;
-    public Javljanja javljanjeTrenutno,/* javljanjePoslednje,*/ javljanjeStop;
-    public Objekti objekat;
-    public Uredjaji uredjaj;
-    public String ulaz;
-    public boolean zaustavljeno;
-    public boolean gorivo;
-    public String kodUredjaja;
-    public int brojIspodNivoa;//koliko puta je nivo goriva manji za više od 1%
-    public Date pocetak;
-    public String test;
-    public static int vreme = 600*1000;
-    public JavljanjaPoslednja poslednje;
+	// ДОДАЈТЕ LOGGER
+	private static final Logger logger = LoggerFactory.getLogger(OpstiThread.class);
+	
+	// SOCKET TIMEOUT КОНСТАНТЕ
+	protected static final int SOCKET_READ_TIMEOUT_MS = 30000; // 30 секунди
+	protected static final int SOCKET_WRITE_TIMEOUT_MS = 5000;  // 5 секунди
+	
+	// ЗАМЕНА: instance variable уместо static
+	protected final int connectionTimeoutMs;
+
+	protected Socket socket = null;
+	protected LinkedBlockingQueue<Socket> socketQueue;
+	protected InputStream input;
+	protected OutputStream out;
+	protected volatile boolean isStopped = false; // volatile за visibility
+	protected boolean prekoracenje = false;
+	protected byte[] data;
+	protected byte[] odg = {(byte)0x00, (byte)0x02, (byte)0x64, (byte)0x01, (byte)0x13, (byte)0xbc};
+	protected int offset;
+	protected OpstiServer server;
+	protected ArrayList<ObjekatZone> objekatZone;
+	protected ArrayList<AlarmiKorisnik> alarmiKorisnici;
+	protected String testDate;
+	protected DateFormat formatter;
+	protected Date date;
+	protected JavljanjeObd javljanjeObd;
+	protected Obd obdStop;
+	protected Javljanja javljanjeTrenutno, javljanjeStop;
+	protected Objekti objekat;
+	protected Uredjaji uredjaj;
+	protected String ulaz;
+	protected boolean zaustavljeno;
+	protected boolean gorivo;
+	protected String kodUredjaja;
+	protected int brojIspodNivoa;
+	protected Date pocetak;
+	protected String test;
+	protected JavljanjaPoslednja poslednje;
+	
+	// НОВИ: Tracking connection ID-а
+	private String clientId;
 	
 	public OpstiThread(LinkedBlockingQueue<Socket> queue, OpstiServer srv) {
+		this(queue, srv, 600 * 1000); // Default 10 минута
+	}
+	
+	// НОВИ: Constructor са customizable timeout-ом
+	public OpstiThread(LinkedBlockingQueue<Socket> queue, OpstiServer srv, int timeoutMs) {
 		socketQueue = queue;
 		server = srv;
+		connectionTimeoutMs = timeoutMs;
+		
 		data = new byte[1024];
 		testDate = "01/07/2019 00:00:00";
 		formatter = new SimpleDateFormat("dd/MM/yyyy HH:mm:ss");
+		
 		try {
 			date = formatter.parse(testDate);
-			} catch (ParseException e) {
-				// TODO Auto-generated catch block
-				e.printStackTrace();
-				}
+		} catch (ParseException e) {
+			logger.error("Greška parsiranja datuma '{}'", testDate, e);
+		}
+		
 		pocetak = new Date();
 		zaustavljeno = false;
 		gorivo = false;
 		brojIspodNivoa = 0;
 		test = "test 0";
 	}
+	
+	/**
+	 * NOVI: Postavi socket sa timeout-ima
+	 */
+	protected void setupSocket(Socket socket, String clientId) throws SocketException {
+		this.socket = socket;
+		this.clientId = clientId;
+		
+		// Postavi timeout-e za čitanje/pisanje
+		socket.setSoTimeout(SOCKET_READ_TIMEOUT_MS);
+		
+		logger.debug("Socket [{}] konfigurisan sa timeout-om {}ms", clientId, SOCKET_READ_TIMEOUT_MS);
+	}
 
 	@Override
-	public void run() {
-		
-	}
+	public abstract void run(); // Implementiraju child klase
 	
+	/**
+	 * REFAKTORISANO: Pronalazi i postavlja uređaj sa error handling-om
+	 */
 	public void pronadjiPostavi(String kodUredjaja) {
 		poslednje = null;
+		
+		// Validacija input parametra
+		if (kodUredjaja == null || kodUredjaja.isEmpty()) {
+			logger.warn("Prazan kod uređaja proslеђen za obradu");
+			return;
+		}
+		
 		try {
-			if(kodUredjaja != null && !kodUredjaja.isEmpty() && !kodUredjaja.equals("")) {
-				uredjaj = Servis.uredjajServis.nadjiUredjajPoKodu(kodUredjaja);
-				
-				if(uredjaj != null) {
-					//objekat = Servis.objekatServis.nadjiObjekatPoUredjaju(uredjaj);						
-					objekat = uredjaj.getObjekti();
-				
-					if(objekat != null) {
-						objekatZone = Servis.zonaObjekatServis.nadjiZoneObjektePoObjektu(objekat);
-						alarmiKorisnici = new ArrayList<AlarmiKorisnik>();
-						alarmiKorisnici.addAll(Servis.alarmKorisnikServis.nadjiSveAlarmeKorisnikePoObjektu(objekat));
-						JavljanjaPoslednja poslednje = Servis.javljanjePoslednjeServis.nadjiJavljanjaPoslednjaPoObjektu(objekat);
-						//javljanjePoslednje// = Servis.javljanjeServis.nadjiPoslednjeJavljanjePoObjektu(objekat);
-						boolean vremeStarijeOdStajanja = false;
-						if(poslednje != null) {
-							long vreme  = pocetak.getTime() - poslednje.getDatumVreme().getTime();
-							if(objekat.getVremeStajanja() > 0 && (vreme/1000 > objekat.getVremeStajanja())) {
-								vremeStarijeOdStajanja = true;
-								}
-						
-						if(poslednje.getBrzina() < 6 && !poslednje.getSistemAlarmi().getSifra().equals("1095") && !vremeStarijeOdStajanja) {
-							javljanjeStop = new Javljanja();
-							javljanjeStop.setDatumVreme(poslednje.getDatumVreme());
-							obdStop = Servis.obdServis.nadjiObdPoslednji(objekat, null);
-							}else {
-								javljanjeStop = null;
-	            				obdStop = null;
-	            				}
-						}
-					}else {
-						System.out.println("uređaj nema objekta: " + kodUredjaja);
-						}
-				
-				}else {
-					System.out.println("nema uredjaja: " + kodUredjaja);
-					}
-			}
-			}catch (Exception e) {
-				System.out.print("greška za uredjaj" + kodUredjaja + " ");
-				e.printStackTrace();
-				stop();
-				}
-		//System.out.println("broj uzimanja objekta: " + broj);
-		}
-	
-	public void obradaJavljanja(Javljanja javljanjeTrenutno, Obd obdTrenutni) {
-		test = "ulaz";
-		JavljanjaPoslednja poslednje = Servis.javljanjePoslednjeServis.nadjiJavljanjaPoslednjaPoObjektu(objekat);
-		boolean mladje = true;
-		if(poslednje != null && javljanjeTrenutno != null) {
-			mladje = javljanjeTrenutno.getDatumVreme().after(poslednje.getDatumVreme());
-		}
-		test = " 1 ";
-		if(javljanjeTrenutno != null && javljanjeTrenutno.getBrzina() < 250 
-				&& javljanjeTrenutno.getDatumVreme().after(date) && !javljanjeTrenutno.getDatumVreme().after(new Date())) {
-			test = " obračun ";
-			//obracun km
-			if(poslednje != null) {
-				if(mladje) {
-					javljanjeTrenutno.setVirtualOdo(poslednje.getVirtualOdo() + (float)Servis.obracun.rastojanje(javljanjeTrenutno, poslednje));
-				}else {
-					javljanjeTrenutno.setVirtualOdo(poslednje.getVirtualOdo());
-				}
-			}else {
-				javljanjeTrenutno.setVirtualOdo(0.0f);
+			// Pronalaženje uređaja
+			uredjaj = Servis.uredjajServis.nadjiUredjajPoKodu(kodUredjaja);
+			
+			if (uredjaj == null) {
+				logger.warn("Uređaj sa kodom '{}' nije pronađen u bazi", kodUredjaja);
+				return;
 			}
 			
-			//za stop
-			test = " za stop ";
-			if(javljanjeTrenutno.getBrzina() > 5) {
-				javljanjeStop = null;
-    			obdStop = null;
-    			zaustavljeno = false;
-    			gorivo = false;
-    			brojIspodNivoa = 0;
-    			}else {
-    				if(javljanjeStop == null) {
-    					javljanjeStop = javljanjeTrenutno;
-    					obdStop = obdTrenutni;
-    					}
-    				}
-			//alarm stajanje
-			//System.out.println("stajanje ");
-			test = " stajanje ";
-			if(javljanjeStop != null && !zaustavljeno && mladje) {
-				long vreme = (javljanjeTrenutno.getDatumVreme().getTime() - javljanjeStop.getDatumVreme().getTime());
-				if(objekat.getVremeStajanja() > 0 && (vreme > (objekat.getVremeStajanja() * 60 * 1000))) {
-					//System.out.println("vreme " + vreme);
-					if(javljanjeTrenutno.getSistemAlarmi().getSifra().equals("0")) {
-						server.postaviAlarmStajanje(javljanjeTrenutno);
-						zaustavljeno = true;
-						}else {
-							server.izvrsavanje.obradaAlarma(javljanjeTrenutno, alarmiKorisnici);
-							server.postaviAlarmStajanje(javljanjeTrenutno);
-							zaustavljeno = true;
-						}
-					}
-				}
+			// Pronalaženje objekta
+			objekat = uredjaj.getObjekti();
 			
-			//alarm prekoračenje brzine
-			test = " prekoračenje ";
-			if(objekat.getPrekoracenjeBrzine() != 0 && mladje) {
-				if((javljanjeTrenutno.getBrzina() > objekat.getPrekoracenjeBrzine()) && !prekoracenje) {
-					prekoracenje = true;
-					if(javljanjeTrenutno.getSistemAlarmi().getSifra().equals("0")) {
-						server.postaviAlarmPrekoracenjeBrzine(javljanjeTrenutno);
-					}else {
-						server.izvrsavanje.obradaAlarma(javljanjeTrenutno, alarmiKorisnici);
-						server.postaviAlarmPrekoracenjeBrzine(javljanjeTrenutno);
-					}
-					if(javljanjeTrenutno.getEventData().equals("0")) {
-						javljanjeTrenutno.setEventData(javljanjeTrenutno.getBrzina() + "км/ч");
-					}else {
-						String eventData = javljanjeTrenutno.getBrzina() + "км/ч, " + javljanjeTrenutno.getEventData();
-						javljanjeTrenutno.setEventData(eventData);
-					}
-				}else {
-					prekoracenje = false;
+			if (objekat == null) {
+				logger.warn("Uređaj '{}' nema pridružen objekat", kodUredjaja);
+				return;
+			}
+			
+			// Učitavanje zona i alarma
+			objekatZone = Servis.zonaObjekatServis.nadjiZoneObjektePoObjektu(objekat);
+			alarmiKorisnici = new ArrayList<>();
+			alarmiKorisnici.addAll(Servis.alarmKorisnikServis.nadjiSveAlarmeKorisnikePoObjektu(objekat));
+			
+			// Učitavanje poslednjeg javljanja
+			poslednje = Servis.javljanjePoslednjeServis.nadjiJavljanjaPoslednjaPoObjektu(objekat);
+			
+			// Provera starog stajanja
+			boolean vremeStarijeOdStajanja = false;
+			if (poslednje != null) {
+				long vreme = pocetak.getTime() - poslednje.getDatumVreme().getTime();
+				if (objekat.getVremeStajanja() > 0 && (vreme / 1000 > objekat.getVremeStajanja())) {
+					vremeStarijeOdStajanja = true;
+				}
+				
+				// Postavljanje stop javljanja ako je relevantno
+				if (poslednje.getBrzina() < 6 
+						&& !poslednje.getSistemAlarmi().getSifra().equals("1095") 
+						&& !vremeStarijeOdStajanja) {
+					javljanjeStop = new Javljanja();
+					javljanjeStop.setDatumVreme(poslednje.getDatumVreme());
+					obdStop = Servis.obdServis.nadjiObdPoslednji(objekat, null);
+				} else {
+					javljanjeStop = null;
+					obdStop = null;
 				}
 			}
 			
-    		//alarm gorivo
-			test = " gorivo ";
-    		if(obdTrenutni != null && mladje && javljanjeTrenutno.getBrzina() < 6) {
-    			JavljanjaMirovanja poslednjeSaBrzinom = null;
-    			try {
-        			//System.out.println(test);
-        			poslednjeSaBrzinom = Servis.javljanjeMirovanjeServis.nadjiJavljanjaMirovanjaPoObjektu(objekat);//ovde je problem
-        			} catch (Exception e) {
-        				System.out.println("greška gorivo " + e);
-        				e.printStackTrace();
-        				//poslednjeSaBrzinom = (JavljanjaMirovanja)Servis.javljanjeServis.nadjiPoslednjeJavljanjePoObjektu(objekat);
-        				}
-    			if(!gorivo && poslednjeSaBrzinom != null) {
-    				//System.out.println(test += " false");
-        			ArrayList<Obd> poslednjiObdUMirovanju = Servis.obdServis.nadjiObdPoslednjaStajanja(objekat, new Timestamp(poslednjeSaBrzinom.getDatumVreme().getTime()));
-        			//System.out.println(test + " brzina " + poslednjeSaBrzinom.getBrzina() + " " + poslednjeSaBrzinom.getDatumVreme() + " komada " + poslednjiObdUMirovanju.size());
-        			/*System.out.println("početni " + poslednjiObdUMirovanju.get(0).getNivoGoriva() + " krajnji " + obdTrenutni.getNivoGoriva() + " razlika " 
-        			+ (poslednjiObdUMirovanju.get(0).getNivoGoriva() - obdTrenutni.getNivoGoriva()));**/
-        			if(!gorivo && poslednjiObdUMirovanju.size() > 0 && (poslednjiObdUMirovanju.get(0).getNivoGoriva() - obdTrenutni.getNivoGoriva() > 3)) {
-        				//System.out.println(test  + " razlika > 2");
-        				if(!javljanjeTrenutno.getSistemAlarmi().getSifra().equals("0")) {
-        					server.izvrsavanje.obradaAlarma(javljanjeTrenutno, alarmiKorisnici);
-        					}
-        				server.postaviAlarmIstakanje(javljanjeTrenutno);
-						gorivo = true;
-						}
-        			/*if(obdStop != null) {
-        				if(!gorivo) {
-        					if(obdTrenutni.getNivoGoriva() - obdStop.getNivoGoriva() > 1 && brojIspodNivoa > 10) {
-        						if(javljanjeTrenutno.getSistemAlarmi().getSifra().equals("0")) {
-        							server.postaviAlarmIstakanje(javljanjeTrenutno);
-        							gorivo = true;
-        							}else {
-        								server.izvrsavanje.obradaAlarma(javljanjeTrenutno, alarmiKorisnici);
-        								server.postaviAlarmIstakanje(javljanjeTrenutno);
-        								gorivo = true;
-        							}
-        						}else {
-            						if(obdStop.getNivoGoriva() - obdTrenutni.getNivoGoriva() > 1) {
-            							brojIspodNivoa++;
-            							}
-            						}
-        					}else {
-            					brojIspodNivoa = 0;
-            					}
-        				}**/
-        			}
-    			Servis.obdServis.unesiObd(obdTrenutni);
-    			}else {
-    				gorivo = false;
-    				}
-    		
-    		//alarm zona
-    		test = " zona ";
-    		if(mladje && objekatZone != null && objekatZone.size() > 0) {
-    			Zone zonaPoslednja = null;
-    			if(poslednje != null) {
-    				zonaPoslednja = poslednje.getZona();
-    			}
-				//ulazak
-    			test = " zona ulaz ";
-				if(zonaPoslednja == null) {
-					for(ObjekatZone objekatZona : objekatZone) {
-						if(objekatZona.isAktivan() && objekatZona.isIzlaz()) {
-        					if(Servis.obracun.rastojanjeKoordinate(javljanjeTrenutno, objekatZona.getZone().getLat(), objekatZona.getZone().getLon()) 
-        							<= objekatZona.getZone().getPrecnik()) {
-        						javljanjeTrenutno.setZona(objekatZona.getZone());
-        						if(javljanjeTrenutno.getSistemAlarmi().getSifra().equals("0")) {
-        							server.postaviAlarmUlazakUZonu(javljanjeTrenutno);
-        							javljanjeTrenutno.setEventData(objekatZona.getZone().getNaziv());
-        							break;
-        						}else {
-        							server.izvrsavanje.obradaAlarma(javljanjeTrenutno, alarmiKorisnici);
-        							server.postaviAlarmUlazakUZonu(javljanjeTrenutno);
-        							javljanjeTrenutno.setEventData(objekatZona.getZone().getNaziv());
-        							break;
-        						}
-        					}
-						}
-					}
-				}else {
-					//izlazak
-					test = " zona izlaz ";
-					javljanjeTrenutno.setZona(zonaPoslednja);
-					ObjekatZone objZona = Servis.zonaObjekatServis.nadjiObjekatZonuPoZoniObjektu(objekat, zonaPoslednja);
-					if(objZona != null && objZona.isAktivan() && objZona.isIzlaz()) {
-    					if(Servis.obracun.rastojanjeKoordinate(javljanjeTrenutno, zonaPoslednja.getLat(), zonaPoslednja.getLon()) > zonaPoslednja.getPrecnik()) {
-    						if(javljanjeTrenutno.getSistemAlarmi().getSifra().equals("0")) {
-    							server.postaviAlarmIzlazakIzZone(javljanjeTrenutno);
-    							javljanjeTrenutno.setEventData(zonaPoslednja.getNaziv());
-    						}else {
-    							server.izvrsavanje.obradaAlarma(javljanjeTrenutno, alarmiKorisnici);
-    							server.postaviAlarmIzlazakIzZone(javljanjeTrenutno);
-    							javljanjeTrenutno.setEventData(zonaPoslednja.getNaziv());
-    						}
-    						javljanjeTrenutno.setZona(null);
-    					}/*else {
-    						javljanjeTrenutno.setZona(zonaPoslednja);
-    					}**/
-					}/*else {
-						javljanjeTrenutno.setZona(zonaPoslednja);
-					}**/
-				}
-    		}
-    		test = " izvrsavanje ";
-    		server.izvrsavanje.obradaAlarma(javljanjeTrenutno, alarmiKorisnici);
-    		}else {
-    			System.out.println("javljanje null: " + ulaz);
-    			}
+			logger.debug("Uređaj '{}' uspešno učitan: objekat={}, zona={}, alarmi={}", 
+			             kodUredjaja, 
+			             objekat != null ? objekat.getOznaka() : "null",
+			             objekatZone != null ? objekatZone.size() : 0,
+			             alarmiKorisnici != null ? alarmiKorisnici.size() : 0);
+			
+		} catch (Exception e) {
+			logger.error("Greška pri pronalaženju/postavljanju uređaja '{}'", kodUredjaja, e);
+			stop(); // Graceful shutdown na kritičnu grešku
 		}
-	
-	
-	public synchronized boolean isStopped(){
-		return this.isStopped;
-		}
-	
-	public synchronized void stop(){
-    	try{
-			if(socket != null && !socket.isClosed()){
-	    		if(input != null)
-	    			input.close();
-				if(out != null) {
-		    		out.flush();
-					out.close();
-					}
-				socket.close();
-				isStopped = true;
-				//server.removeClientSocket(socket);
-				//System.out.println("coban stream connection closed ");
-				}
-			}catch(IOException e){
-				System.out.println("ruptela stream connection closed problem...");
-				}
-		return;
-		}
-	
 	}
+	
+	/**
+	 * REFAKTORISANO: Obrada javljanja sa boljim error handling-om
+	 */
+	public void obradaJavljanja(Javljanja javljanjeTrenutno, Obd obdTrenutni) {
+		if (javljanjeTrenutno == null) {
+			logger.warn("Primljeno null javljanje za obradu, preskačem. Ulaz: {}", ulaz);
+			return;
+		}
+		
+		try {
+			test = "ulaz";
+			JavljanjaPoslednja poslednje = Servis.javljanjePoslednjeServis.nadjiJavljanjaPoslednjaPoObjektu(objekat);
+			
+			boolean mladje = true;
+			if (poslednje != null) {
+				mladje = javljanjeTrenutno.getDatumVreme().after(poslednje.getDatumVreme());
+			}
+			
+			// Validacija brzine i datuma
+			if (javljanjeTrenutno.getBrzina() >= 250) {
+				logger.warn("Odbačeno javljanje sa nerealno visokom brzinom: {} km/h", javljanjeTrenutno.getBrzina());
+				return;
+			}
+			
+			if (javljanjeTrenutno.getDatumVreme().before(date)) {
+				logger.warn("Odbačeno javljanje sa datumom pre minimuma: {}", javljanjeTrenutno.getDatumVreme());
+				return;
+			}
+			
+			if (javljanjeTrenutno.getDatumVreme().after(new Date())) {
+				logger.warn("Odbačeno javljanje iz budućnosti: {}", javljanjeTrenutno.getDatumVreme());
+				return;
+			}
+			
+			// Obračun kilometraže
+			test = "obračun";
+			obracunKilometraze(javljanjeTrenutno, poslednje, mladje);
+			
+			// Stop handling
+			test = "za stop";
+			handleStopCondition(javljanjeTrenutno, obdTrenutni);
+			
+			// Alarm: Stajanje
+			test = "stajanje";
+			handleAlarmStajanje(javljanjeTrenutno, mladje);
+			
+			// Alarm: Prekoračenje brzine
+			test = "prekoračenje";
+			handleAlarmPrekoracenjeBrzine(javljanjeTrenutno, mladje);
+			
+			// Alarm: Gorivo
+			test = "gorivo";
+			handleAlarmGorivo(javljanjeTrenutno, obdTrenutni, mladje);
+			
+			// Alarm: Zone
+			test = "zona";
+			handleAlarmZone(javljanjeTrenutno, mladje);
+			
+			// Finalna obrada alarma
+			test = "izvrsavanje";
+			server.izvrsavanje.obradaAlarma(javljanjeTrenutno, alarmiKorisnici);
+			
+		} catch (Exception e) {
+			logger.error("Greška pri obradi javljanja (faza: {})", test, e);
+		}
+	}
+	
+	/**
+	 * IZDVOJENO: Obračun kilometraže
+	 */
+	private void obracunKilometraze(Javljanja trenutno, JavljanjaPoslednja poslednje, boolean mladje) {
+		if (poslednje != null) {
+			if (mladje) {
+				trenutno.setVirtualOdo(poslednje.getVirtualOdo() + 
+				                       (float) Servis.obracun.rastojanje(trenutno, poslednje));
+			} else {
+				trenutno.setVirtualOdo(poslednje.getVirtualOdo());
+			}
+		} else {
+			trenutno.setVirtualOdo(0.0f);
+		}
+	}
+	
+	/**
+	 * IZDVOJENO: Stop condition handling
+	 */
+	private void handleStopCondition(Javljanja trenutno, Obd obdTrenutni) {
+		if (trenutno.getBrzina() > 5) {
+			javljanjeStop = null;
+			obdStop = null;
+			zaustavljeno = false;
+			gorivo = false;
+			brojIspodNivoa = 0;
+		} else {
+			if (javljanjeStop == null) {
+				javljanjeStop = trenutno;
+				obdStop = obdTrenutni;
+			}
+		}
+	}
+	
+	/**
+	 * IZDVOJENO: Alarm stajanje
+	 */
+	private void handleAlarmStajanje(Javljanja trenutno, boolean mladje) {
+		if (javljanjeStop != null && !zaustavljeno && mladje) {
+			long vreme = trenutno.getDatumVreme().getTime() - javljanjeStop.getDatumVreme().getTime();
+			
+			if (objekat.getVremeStajanja() > 0 && (vreme > (objekat.getVremeStajanja() * 60 * 1000))) {
+				if (!trenutno.getSistemAlarmi().getSifra().equals("0")) {
+					server.izvrsavanje.obradaAlarma(trenutno, alarmiKorisnici);
+				}
+				server.postaviAlarmStajanje(trenutno);
+				zaustavljeno = true;
+				
+				logger.debug("Alarm STAJANJE aktiviran za objekat: {} (trajanje: {}ms)", 
+				             objekat.getOznaka(), vreme);
+			}
+		}
+	}
+	
+	/**
+	 * IZDVOJENO: Alarm prekoračenje brzine
+	 */
+	private void handleAlarmPrekoracenjeBrzine(Javljanja trenutno, boolean mladje) {
+		if (objekat.getPrekoracenjeBrzine() != 0 && mladje) {
+			if (trenutno.getBrzina() > objekat.getPrekoracenjeBrzine() && !prekoracenje) {
+				prekoracenje = true;
+				
+				if (!trenutno.getSistemAlarmi().getSifra().equals("0")) {
+					server.izvrsavanje.obradaAlarma(trenutno, alarmiKorisnici);
+				}
+				server.postaviAlarmPrekoracenjeBrzine(trenutno);
+				
+				// Dodaj brzinu u event data
+				if (trenutno.getEventData().equals("0")) {
+					trenutno.setEventData(trenutno.getBrzina() + "км/ч");
+				} else {
+					trenutno.setEventData(trenutno.getBrzina() + "км/ч, " + trenutno.getEventData());
+				}
+				
+				logger.warn("Alarm PREKORAČENJE BRZINE: objekat={}, brzina={}km/h, limit={}km/h", 
+				            objekat.getOznaka(), trenutno.getBrzina(), objekat.getPrekoracenjeBrzine());
+			} else {
+				prekoracenje = false;
+			}
+		}
+	}
+	
+	/**
+	 * IZDVOJENO: Alarm gorivo (pojednostavljena logika)
+	 */
+	private void handleAlarmGorivo(Javljanja trenutno, Obd obdTrenutni, boolean mladje) {
+		if (obdTrenutni == null || !mladje || trenutno.getBrzina() >= 6) {
+			gorivo = false;
+			return;
+		}
+		
+		try {
+			JavljanjaMirovanja poslednjeSaBrzinom = 
+				Servis.javljanjeMirovanjeServis.nadjiJavljanjaMirovanjaPoObjektu(objekat);
+			
+			if (!gorivo && poslednjeSaBrzinom != null) {
+				ArrayList<Obd> poslednjiObdUMirovanju = Servis.obdServis.nadjiObdPoslednjaStajanja(
+					objekat, new Timestamp(poslednjeSaBrzinom.getDatumVreme().getTime())
+				);
+				
+				if (poslednjiObdUMirovanju != null && poslednjiObdUMirovanju.size() > 0) {
+					float razlika = poslednjiObdUMirovanju.get(0).getNivoGoriva() - obdTrenutni.getNivoGoriva();
+					
+					if (razlika > 3) {
+						if (!trenutno.getSistemAlarmi().getSifra().equals("0")) {
+							server.izvrsavanje.obradaAlarma(trenutno, alarmiKorisnici);
+						}
+						server.postaviAlarmIstakanje(trenutno);
+						gorivo = true;
+						
+						logger.warn("Alarm ISTAKANJE GORIVA: objekat={}, razlika={}%", 
+						            objekat.getOznaka(), razlika);
+					}
+				}
+			}
+			
+			// Snimanje OBD podataka
+			Servis.obdServis.unesiObd(obdTrenutni);
+			
+		} catch (Exception e) {
+			logger.error("Greška pri obradi alarma goriva", e);
+		}
+	}
+	
+	/**
+	 * IZDVOJENO: Alarm zone (ulazak/izlazak)
+	 */
+	private void handleAlarmZone(Javljanja trenutno, boolean mladje) {
+		if (!mladje || objekatZone == null || objekatZone.isEmpty()) {
+			return;
+		}
+		
+		Zone zonaPoslednja = (poslednje != null) ? poslednje.getZona() : null;
+		
+		if (zonaPoslednja == null) {
+			// Provera ulaska u zonu
+			handleUlazakUZonu(trenutno);
+		} else {
+			// Provera izlaska iz zone
+			handleIzlazakIzZone(trenutno, zonaPoslednja);
+		}
+	}
+	
+	/**
+	 * IZDVOJENO: Ulazak u zonu
+	 */
+	private void handleUlazakUZonu(Javljanja trenutno) {
+		for (ObjekatZone objekatZona : objekatZone) {
+			if (!objekatZona.isAktivan() || !objekatZona.isIzlaz()) {
+				continue;
+			}
+			
+			double rastojanje = Servis.obracun.rastojanjeKoordinate(
+				trenutno, 
+				objekatZona.getZone().getLat(), 
+				objekatZona.getZone().getLon()
+			);
+			
+			if (rastojanje <= objekatZona.getZone().getPrecnik()) {
+				trenutno.setZona(objekatZona.getZone());
+				
+				if (!trenutno.getSistemAlarmi().getSifra().equals("0")) {
+					server.izvrsavanje.obradaAlarma(trenutno, alarmiKorisnici);
+				}
+				server.postaviAlarmUlazakUZonu(trenutno);
+				trenutno.setEventData(objekatZona.getZone().getNaziv());
+				
+				logger.info("Alarm ULAZAK U ZONU: objekat={}, zona={}", 
+				            objekat.getOznaka(), objekatZona.getZone().getNaziv());
+				break;
+			}
+		}
+	}
+	
+	/**
+	 * IZDVOJENO: Izlazak iz zone
+	 */
+	private void handleIzlazakIzZone(Javljanja trenutno, Zone zonaPoslednja) {
+		trenutno.setZona(zonaPoslednja);
+		
+		ObjekatZone objZona = Servis.zonaObjekatServis.nadjiObjekatZonuPoZoniObjektu(objekat, zonaPoslednja);
+		
+		if (objZona != null && objZona.isAktivan() && objZona.isIzlaz()) {
+			double rastojanje = Servis.obracun.rastojanjeKoordinate(
+				trenutno, 
+				zonaPoslednja.getLat(), 
+				zonaPoslednja.getLon()
+			);
+			
+			if (rastojanje > zonaPoslednja.getPrecnik()) {
+				if (!trenutno.getSistemAlarmi().getSifra().equals("0")) {
+					server.izvrsavanje.obradaAlarma(trenutno, alarmiKorisnici);
+				}
+				server.postaviAlarmIzlazakIzZone(trenutno);
+				trenutno.setEventData(zonaPoslednja.getNaziv());
+				trenutno.setZona(null);
+				
+				logger.info("Alarm IZLAZAK IZ ZONE: objekat={}, zona={}", 
+				            objekat.getOznaka(), zonaPoslednja.getNaziv());
+			}
+		}
+	}
+	
+	/**
+	 * POBOLJŠANO: Graceful stop sa notifikacijom servera
+	 */
+	public synchronized void stop() {
+		if (isStopped) {
+			return; // Već zaustavljen
+		}
+		
+		isStopped = true;
+		
+		try {
+			// Zatvaranje stream-ova
+			if (input != null) {
+				try {
+					input.close();
+				} catch (IOException e) {
+					logger.warn("Greška zatvaranja input stream-a: {}", e.getMessage());
+				}
+			}
+			
+			if (out != null) {
+				try {
+					out.flush();
+					out.close();
+				} catch (IOException e) {
+					logger.warn("Greška zatvaranja output stream-a: {}", e.getMessage());
+				}
+			}
+			
+			// Zatvaranje socket-a
+			if (socket != null && !socket.isClosed()) {
+				socket.close();
+				logger.debug("Socket [{}] zatvoren", clientId);
+			}
+			
+			// OBAVESTI SERVER DA UKLONI SOCKET
+			if (clientId != null && server != null) {
+				server.removeClientSocket(clientId);
+			}
+			
+		} catch (IOException e) {
+			logger.error("Greška pri zaustavljanju thread-a [{}]", clientId, e);
+		}
+	}
+	
+	/**
+	 * NOVO: Getter za client ID
+	 */
+	public String getClientId() {
+		return clientId;
+	}
+	
+	/**
+	 * NOVO: Provera da li je thread zaustavljen
+	 */
+	public synchronized boolean isStopped() {
+		return this.isStopped;
+	}
+}
