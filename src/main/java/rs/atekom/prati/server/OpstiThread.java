@@ -121,7 +121,7 @@ public abstract class OpstiThread implements Runnable {
 		
 		// Validacija input parametra
 		if (kodUredjaja == null || kodUredjaja.isEmpty()) {
-			logger.warn("Prazan kod uređaja proslеђen za obradu");
+			logger.warn("Prazan kod uređaja prosleđen za obradu");
 			return;
 		}
 		

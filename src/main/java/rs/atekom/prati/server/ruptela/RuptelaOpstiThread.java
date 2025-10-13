@@ -58,11 +58,11 @@ public class RuptelaOpstiThread extends OpstiThread {
 		String clientId = null;
 		
 		try {
-			// ✅ Узимање socket-a из реда
+			//Узимање socket-a из реда
 			socket = socketQueue.take();
 			clientId = "RUPTELA-" + socket.getRemoteSocketAddress();
 			
-			// ✅ ПОЗИВ setupSocket() из parent klase (thread-safe)
+			//ПОЗИВ setupSocket() из parent klase (thread-safe)
 			setupSocket(socket, clientId);
 			
 			input = socket.getInputStream();
