@@ -133,11 +133,11 @@ public class ServerManager {
                 Future<?> future = serverExecutor.submit(instance.server);
                 instance.setFuture(future);
                 instance.setStatus(ServerStatus.RUNNING);
-                logger.info("✓ Сервер {} покренут на порту {}", 
+                logger.info("Сервер {} покренут на порту {}", 
                     instance.name, instance.port);
             } catch (Exception e) {
                 instance.setStatus(ServerStatus.FAILED);
-                logger.error("✗ Грешка при покретању сервера {}: {}", 
+                logger.error("Грешка при покретању сервера {}: {}", 
                     instance.name, e.getMessage(), e);
             }
         }

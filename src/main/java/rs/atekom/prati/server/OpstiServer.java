@@ -97,7 +97,7 @@ public class OpstiServer implements Runnable {
 	@Override
 	public void run() {
 		LinkedBlockingQueue<Socket> queue = new LinkedBlockingQueue<>();
-		logger.info("→ Pokretanje {} TCP servera...", server);
+		logger.info(" Pokretanje {} TCP servera...", server);
 		
 		try {
 			serverSocket = new ServerSocket(listeningPort);
@@ -134,7 +134,7 @@ public class OpstiServer implements Runnable {
 					// Логовање на сваку 1000-ту конекцију
 					if(connectionId == 1 || connectionId % 1000 == 0) {
 						logger.info("═══════════════════════════════════════════════════");
-						logger.info("{} | Konakcija #{} | Aktivnih thread-ova: {} | Ukupno klijenata: {} | {}", 
+						logger.info("{} | Konekcija #{} | Aktivnih thread-ova: {} | Ukupno klijenata: {} | {}", 
 						            server, connectionId, 
 						            ((ThreadPoolExecutor) pool).getActiveCount(),
 						            clientSockets.size(),
@@ -180,7 +180,7 @@ public class OpstiServer implements Runnable {
 		// Затварамо све client socket-е
 		int clientCount = clientSockets.size();
 		if (clientCount > 0) {
-			logger.info("→ Zatvaranje {} klijentskih konekcija...", clientCount);
+			logger.info("Zatvaranje {} klijentskih konekcija...", clientCount);
 			
 			int closed = 0;
 			for (Socket socket : clientSockets.values()) {
@@ -195,7 +195,7 @@ public class OpstiServer implements Runnable {
 			}
 			
 			clientSockets.clear();
-			logger.info("✓ Zatvoreno {}/{} klijentskih socket-a", closed, clientCount);
+			logger.info("Zatvoreno {}/{} klijentskih socket-a", closed, clientCount);
 		}
 		
 		// Затварамо server socket
@@ -224,12 +224,16 @@ public class OpstiServer implements Runnable {
 		}
 		
 		logger.info("═══════════════════════════════════════════════════");
-		logger.info("  ✓ Server {} uspešno zaustavljen", server);
+		logger.info("    Server {} uspešno zaustavljen", server);
 		logger.info("═══════════════════════════════════════════════════");
 	}
 	
 	/**
 	 * Уклања client socket по ID-у
+	 * проблем - clientId из самог наследника није исти 
+	 * као онај који се креира за унос у листу коју 
+	 * користи сервер па се гашење никада не деси 
+	 * 
 	 */
 	public void removeClientSocket(String clientId) {
 		Socket socket = clientSockets.remove(clientId);
@@ -246,21 +250,39 @@ public class OpstiServer implements Runnable {
 	}
 	
 	/**
-	 * Стара метода - deprecated
-	 * @deprecated Koristite {@link #removeClientSocket(String)}
+	 * Уклања све уносе који референцирају дати сокет и затвара сокет.
+	 * Више није застарело: корисно када ID није доследан.
 	 */
-	@Deprecated
-	public synchronized void removeClientSocket(Socket clientSocket) {
-		try {
-			clientSockets.entrySet().removeIf(entry -> entry.getValue().equals(clientSocket));
-			
-			if (clientSocket != null && !clientSocket.isClosed()) {
-				clientSocket.close();
-			}
-			logger.debug("Client socket uklonjen (deprecated method)");
-		} catch (Throwable e) {
-			logger.warn("Greška uklanjanja {} socket-a", server, e);
-		}
+	public void removeClientSocket(Socket clientSocket) {
+	    if (clientSocket == null) {
+	        logger.debug("removeClientSocket: prosleđen null");
+	        return;
+	    }
+
+	    // 1) Прво затвори сокет да одмах разблокираш I/O
+	    try {
+	        if (!clientSocket.isClosed()) {
+	            try {
+	                clientSocket.shutdownInput();
+	            } catch (IOException ignore) {}
+	            try {
+	                clientSocket.shutdownOutput();
+	            } catch (IOException ignore) {}
+	            clientSocket.close();
+	        }
+	    } catch (IOException e) {
+	        logger.warn("Грешка при затварању сокета: {}", e.getMessage());
+	    }
+
+	    // 2) Онда уклони све уносе из мапе који показују на исти сокет
+	    int[] removed = {0};
+	    clientSockets.entrySet().removeIf(entry -> {
+	        boolean match = entry.getValue() == clientSocket; // референтна једнакост
+	        if (match) removed[0]++;
+	        return match;
+	    });
+
+	    logger.debug("Client socket уклоњен из мапе ({} унос/а)", removed[0]);
 	}
 	
 	/**

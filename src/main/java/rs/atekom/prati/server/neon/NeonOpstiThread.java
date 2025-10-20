@@ -47,7 +47,7 @@ public class NeonOpstiThread extends OpstiThread {
 		String clientId = null;
 		
 		try {
-			// ✅ Uzimanje socket-a iz reda
+			// Uzimanje socket-a iz reda
 			socket = socketQueue.take();
 			clientId = "NEON-" + socket.getRemoteSocketAddress();
 			

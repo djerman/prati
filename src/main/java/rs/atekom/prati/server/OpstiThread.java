@@ -71,11 +71,15 @@ public abstract class OpstiThread implements Runnable {
 	private String clientId;
 	
 	public OpstiThread(LinkedBlockingQueue<Socket> queue, OpstiServer srv) {
-		this(queue, srv, 600 * 1000); // Default 10 минута
+		// Default (био 10) 5 минута
+		// Druga opcija je da se smanji na 60-90s pa da se broje uzastopni tajmauti
+		// ako pređe recimo 6-8 da onda izlazi
+		this(queue, srv, 300 * 1000);
 	}
 	
 	// НОВИ: Constructor са customizable timeout-ом
 	public OpstiThread(LinkedBlockingQueue<Socket> queue, OpstiServer srv, int timeoutMs) {
+		
 		socketQueue = queue;
 		server = srv;
 		connectionTimeoutMs = timeoutMs;
@@ -490,7 +494,9 @@ public abstract class OpstiThread implements Runnable {
 			
 			// OBAVESTI SERVER DA UKLONI SOCKET
 			if (clientId != null && server != null) {
-				server.removeClientSocket(clientId);
+				//server.removeClientSocket(clientId);
+				//због разлика у clientId
+				server.removeClientSocket(socket);
 			}
 			
 		} catch (IOException e) {
