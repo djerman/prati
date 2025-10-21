@@ -30,6 +30,8 @@ public abstract class OpstiThread implements Runnable {
 
 	// ДОДАЈТЕ LOGGER
 	private static final Logger logger = LoggerFactory.getLogger(OpstiThread.class);
+	// tolerancija: 1 минут
+	private static final long SKEW_MS = 60_000L;
 	
 	// SOCKET TIMEOUT КОНСТАНТЕ
 	protected static final int SOCKET_READ_TIMEOUT_MS = 30000; // 30 секунди
@@ -216,9 +218,16 @@ public abstract class OpstiThread implements Runnable {
 				return;
 			}
 			
-			if (javljanjeTrenutno.getDatumVreme().after(new Date())) {
+			/*if (javljanjeTrenutno.getDatumVreme().after(new Date())) {
 				logger.warn("Odbačeno javljanje iz budućnosti: {}", javljanjeTrenutno.getDatumVreme());
 				return;
+			}*/
+			Date ts = javljanjeTrenutno.getDatumVreme();
+			long now = System.currentTimeMillis();
+			if (ts.getTime() - now > SKEW_MS) {
+			    // строго из будућности (више од 1 минута)
+			    logger.warn("Odbačeno javljanje iz budućnosti (>1min): {}", ts);
+			    return;
 			}
 			
 			// Obračun kilometraže
@@ -328,7 +337,7 @@ public abstract class OpstiThread implements Runnable {
 					trenutno.setEventData(trenutno.getBrzina() + "км/ч, " + trenutno.getEventData());
 				}
 				
-				logger.warn("Alarm PREKORAČENJE BRZINE: objekat={}, brzina={}km/h, limit={}km/h", 
+				logger.info("Alarm PREKORAČENJE BRZINE: objekat={}, brzina={}km/h, limit={}km/h", 
 				            objekat.getOznaka(), trenutno.getBrzina(), objekat.getPrekoracenjeBrzine());
 			} else {
 				prekoracenje = false;
@@ -364,7 +373,7 @@ public abstract class OpstiThread implements Runnable {
 						server.postaviAlarmIstakanje(trenutno);
 						gorivo = true;
 						
-						logger.warn("Alarm ISTAKANJE GORIVA: objekat={}, razlika={}%", 
+						logger.info("Alarm ISTAKANJE GORIVA: objekat={}, razlika={}%", 
 						            objekat.getOznaka(), razlika);
 					}
 				}

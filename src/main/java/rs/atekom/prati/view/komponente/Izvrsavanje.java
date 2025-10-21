@@ -39,7 +39,7 @@ public class Izvrsavanje {
         		         , "у " + datumVreme.format(javljanje.getDatumVreme()) + " " + javljanje.getEventData()
         		         , " "
         		         , "Порука је аутоматски генерисана, немојте одговарати."
-        		         , "Атеком доо, www.atekom.rs info@atekom.rs"
+        		         , "Атеком доо, www.atekom.rs prati@atekom.rs"
         		);
         		Servis.posta.posaljiMail(alarmKorisnik.getKorisnik().getEmail(), zaglavlje, poruka);
         	}
@@ -60,9 +60,11 @@ public class Izvrsavanje {
 	                GeoApiContext gctx = Servis.ensureGContext();
 	                LatLng poz = new LatLng(lat, lon);
 	                GeocodingResult[] r = GeocodingApi.reverseGeocode(gctx, poz).await();
+	                
 	                if (r != null && r.length > 0 && r[0] != null && r[0].formattedAddress != null) {
 	                    adresa = r[0].formattedAddress;
 	                }
+	                
 	            } catch (Exception ge) {
 	                System.err.println("[alarmAdresa] Google error: " + ge.getMessage());
 	            }
