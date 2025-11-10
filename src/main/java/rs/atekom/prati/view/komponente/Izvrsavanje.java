@@ -11,6 +11,7 @@ import pratiBaza.tabele.AlarmiKorisnik;
 import pratiBaza.tabele.Javljanja;
 import rs.atekom.prati.Broadcaster;
 import rs.atekom.prati.server.Address;
+import rs.atekom.prati.server.NominatimReverseGeocodingJAPI;
 import rs.atekom.prati.server.Servis;
 
 public class Izvrsavanje {
@@ -71,22 +72,29 @@ public class Izvrsavanje {
 
 	            // 2) Ako nema Google adrese → Nominatim JSON
 	            if (adresa.isEmpty()) {
-	                try {
-	                    Address a = Servis.ensureNominatimJson().getAdress(lat, lon);
-	                    if (a != null) {
-	                        StringBuilder sb = new StringBuilder();
-	                        if (!a.getHouseNumber().isEmpty()) sb.append(a.getHouseNumber()).append(", ");
-	                        if (!a.getRoad().isEmpty())        sb.append(a.getRoad()).append(", ");
-	                        if (!a.getSuburb().isEmpty())      sb.append(a.getSuburb()).append(", ");
-	                        if (!a.getCity().isEmpty())        sb.append(a.getCity()).append(' ');
-	                        if (!a.getPostcode().isEmpty())    sb.append(a.getPostcode());
-	                        if (!a.getCounty().isEmpty())      sb.append(", ").append(a.getCounty()).append(", ");
-	                        if (!a.getCountry().isEmpty())     sb.append(a.getCountry());
-	                        adresa = sb.toString().trim();
-	                    }
-	                } catch (Exception ne) {
-	                    System.err.println("[alarmAdresa] Nominatim JSON error: " + ne.getMessage());
-	                }
+//	                try {
+//	                    Address a = Servis.ensureNominatimJson().getAdress(lat, lon);
+//	                    if (a != null) {
+//	                        StringBuilder sb = new StringBuilder();
+//	                        if (!a.getHouseNumber().isEmpty()) sb.append(a.getHouseNumber()).append(", ");
+//	                        if (!a.getRoad().isEmpty())        sb.append(a.getRoad()).append(", ");
+//	                        if (!a.getSuburb().isEmpty())      sb.append(a.getSuburb()).append(", ");
+//	                        if (!a.getCity().isEmpty())        sb.append(a.getCity()).append(' ');
+//	                        if (!a.getPostcode().isEmpty())    sb.append(a.getPostcode());
+//	                        if (!a.getCounty().isEmpty())      sb.append(", ").append(a.getCounty()).append(", ");
+//	                        if (!a.getCountry().isEmpty())     sb.append(a.getCountry());
+//	                        adresa = sb.toString().trim();
+//	                    }
+//	                } catch (Exception ne) {
+//	                    System.err.println("[alarmAdresa] Nominatim JSON error: " + ne.getMessage());
+//	                }
+	            	try {
+	            		NominatimReverseGeocodingJAPI api =
+	                            new NominatimReverseGeocodingJAPI("https://nominatim.openstreetmap.org");
+	            		adresa = api.getAdress(lat, lon).getDisplayName();
+	            	}catch (Exception e) {
+	            		System.err.println("[alarmAdresa] Nominatim JSON error: " + e.getMessage());
+					}
 	            }
 
 	            // 3) Ako i dalje prazno → NominatimClient
