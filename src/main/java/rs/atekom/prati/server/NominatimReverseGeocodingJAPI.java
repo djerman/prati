@@ -4,10 +4,10 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.atomic.AtomicLong;
-import javax.net.ssl.HttpsURLConnection;
 
 /**
  * Reverse geocoding преко OpenStreetMap Nominatim сервиса.
@@ -137,10 +137,10 @@ public class NominatimReverseGeocodingJAPI {
     private String getJSON(String urlString) throws IOException {
         honorRateLimit(); // Минимални паузер да избегнемо 429.
 
-        HttpsURLConnection conn = null;
+        HttpURLConnection conn = null;
         try {
             URL url = new URL(urlString);
-            conn = (HttpsURLConnection) url.openConnection();
+            conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("GET");
 
             // Конзервативни timeout-ови; прилагодити по потреби.

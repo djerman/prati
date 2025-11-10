@@ -2,11 +2,11 @@ package rs.atekom.prati.view.komponente;
 
 import java.util.ArrayList;
 import java.util.Date;
-import com.google.maps.model.LatLng;
+//import com.google.maps.model.LatLng;
 import com.ibm.icu.text.SimpleDateFormat;
-import com.google.maps.model.GeocodingResult;
-import com.google.maps.GeoApiContext;
-import com.google.maps.GeocodingApi;
+//import com.google.maps.model.GeocodingResult;
+//import com.google.maps.GeoApiContext;
+//import com.google.maps.GeocodingApi;
 import pratiBaza.tabele.AlarmiKorisnik;
 import pratiBaza.tabele.Javljanja;
 import rs.atekom.prati.Broadcaster;
@@ -56,7 +56,7 @@ public class Izvrsavanje {
 	    try {
 	        if (javljanje.getSistemAlarmi().isAdresa()) {
 	            // 1) Google (globalni ključ iz Servis.ensureGContext)
-	            try {
+	            /*try {
 	                GeoApiContext gctx = Servis.ensureGContext();
 	                LatLng poz = new LatLng(lat, lon);
 	                GeocodingResult[] r = GeocodingApi.reverseGeocode(gctx, poz).await();
@@ -67,7 +67,7 @@ public class Izvrsavanje {
 	                
 	            } catch (Exception ge) {
 	                System.err.println("[alarmAdresa] Google error: " + ge.getMessage());
-	            }
+	            }*/
 
 	            // 2) Ako nema Google adrese → Nominatim JSON
 	            if (adresa.isEmpty()) {
