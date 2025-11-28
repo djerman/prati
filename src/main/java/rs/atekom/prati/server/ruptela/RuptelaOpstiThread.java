@@ -43,7 +43,6 @@ public class RuptelaOpstiThread extends OpstiThread {
 	private static final int COMMAND_EXTENDED = 0x44;   // Проширени протокол (68 decimal)
 	
 	// ДОДАТ: Offset константе за парсирање
-	private static final int OFFSET_PACKET_LENGTH = 4;
 	private static final int OFFSET_IMEI = 16;
 	private static final int OFFSET_COMMAND = 2;
 
@@ -97,12 +96,19 @@ public class RuptelaOpstiThread extends OpstiThread {
 				}
 				
 				// ═══════════════════════════════════════════════════════════
-				// ПАРСИРАЊЕ HEADER-А - TCP PACKET WRAPPER
+				// ДЕТЕКЦИЈА И ПАРСИРАЊЕ HEADER-А - TCP PACKET WRAPPER (опционално)
 				// ═══════════════════════════════════════════════════════════
+				// 
+				// НАПОМЕНА: Неки уређаји шаљу TCP Packet Wrapper (Packet length + CRC),
+				// а неки шаљу директно AVL Data Packet (са "preamble" од 4 бајта).
+				// Проверавамо да ли постоји TCP Packet Wrapper:
+				// - Ако прва 4 бајта изгледају као Packet length (мањи од максимума),
+				//   и следећа 4 бајта имају валидан CRC, онда је то TCP Packet Wrapper.
+				// - Иначе, прескачемо прва 4 бајта као "preamble" и читамо директно AVL Data Packet.
 				
-				// Провера минималне дужине пакета (Packet length + CRC-16 = 4 hex chars)
-				if (ulaz.length() < 4) {
-					logger.warn("RUPTELA [{}]: Пакет прекратак ({} hex карактера, минимално 4)", 
+				// Провера минималне дужине пакета
+				if (ulaz.length() < 8) {
+					logger.warn("RUPTELA [{}]: Пакет прекратак ({} hex карактера, минимално 8)", 
 					            clientId, ulaz.length());
 					try {
 						out.write(nack);
@@ -114,79 +120,47 @@ public class RuptelaOpstiThread extends OpstiThread {
 					continue; // Прескочи овај пакет
 				}
 				
-				// Читање Packet length (2 bytes = 4 hex chars)
-				int packetLength;
+				// Покушај да детектујемо TCP Packet Wrapper
+				boolean hasTcpWrapper = false;
+				int packetLength = 0;
+				int tcpWrapperOffset = 0; // Offset после TCP Packet Wrapper или preamble (4 или 8)
+				
 				try {
+					// Читање првих 4 бајтова као Packet length
 					packetLength = Integer.parseInt(ulaz.substring(0, 4), 16);
-				} catch (NumberFormatException e) {
-					logger.error("RUPTELA [{}]: Грешка парсирања Packet length", clientId, e);
-					try {
-						out.write(nack);
-						out.flush();
-						logger.debug("RUPTELA [{}]: NACK послат - грешка парсирања Packet length", clientId);
-					} catch (IOException ioex) {
-						logger.error("RUPTELA [{}]: Грешка слања NACK", clientId, ioex);
+					
+					// Провера да ли Packet length изгледа разумно (мањи од 10000 бајтова)
+					// и да ли пакет има довољно података за TCP Packet Wrapper
+					if (packetLength > 0 && packetLength < 10000 && ulaz.length() >= (packetLength * 2 + 8)) {
+						// Верификација CRC-16 за TCP Packet Wrapper
+						byte[] packetLengthBytes = new byte[2];
+						packetLengthBytes[0] = (byte)((packetLength >>> 8) & 0xFF);
+						packetLengthBytes[1] = (byte)(packetLength & 0xFF);
+						int calculatedCrc = calculateCrc16Kermit(packetLengthBytes);
+						
+						// Читање CRC-16 из пакета (после Packet length, 2 bytes = 4 hex chars)
+						int receivedCrc = Integer.parseInt(ulaz.substring(4, 8), 16);
+						
+						// Ако се CRC поклапа, онда је то TCP Packet Wrapper
+						if (calculatedCrc == receivedCrc) {
+							hasTcpWrapper = true;
+							tcpWrapperOffset = 8; // Packet length (4) + CRC (4) = 8 hex chars
+							logger.trace("RUPTELA [{}]: Детектован TCP Packet Wrapper (Packet length: {}, CRC: 0x{})", 
+							            clientId, packetLength, String.format("%04X", calculatedCrc));
+						}
 					}
-					continue;
+				} catch (NumberFormatException | StringIndexOutOfBoundsException e) {
+					// Не може да се парсира као TCP Packet Wrapper, користимо стари формат
+					hasTcpWrapper = false;
 				}
 				
-				// Провера да ли пакет има довољно података
-				// Packet length + CRC-16 = packetLength + 2 bytes = packetLength * 2 + 4 hex chars
-				int expectedLength = packetLength * 2 + 4; // packetLength у бајтовима, *2 за hex, +4 за CRC
-				if (ulaz.length() < expectedLength) {
-					logger.warn("RUPTELA [{}]: Пакет непотпуан (очекивано {} hex карактера, доступно {})", 
-					            clientId, expectedLength, ulaz.length());
-					try {
-						out.write(nack);
-						out.flush();
-						logger.debug("RUPTELA [{}]: NACK послат - пакет непотпуан", clientId);
-					} catch (IOException e) {
-						logger.error("RUPTELA [{}]: Грешка слања NACK", clientId, e);
-					}
-					continue; // Прескочи овај пакет
+				// Ако нема TCP Packet Wrapper, прескачемо прва 4 бајта као "preamble" (као у оригиналном коду)
+				if (!hasTcpWrapper) {
+					tcpWrapperOffset = 4; // Прескачемо "preamble" од 4 бајта
+					logger.trace("RUPTELA [{}]: Користи се стари формат (без TCP Packet Wrapper)", clientId);
 				}
 				
-				// Верификација CRC-16 за TCP Packet Wrapper
-				// CRC се рачуна за Packet length (2 bytes)
-				byte[] packetLengthBytes = new byte[2];
-				packetLengthBytes[0] = (byte)((packetLength >>> 8) & 0xFF);
-				packetLengthBytes[1] = (byte)(packetLength & 0xFF);
-				int calculatedCrc = calculateCrc16Kermit(packetLengthBytes);
-				
-				// Читање CRC-16 из пакета (после Packet length, 2 bytes = 4 hex chars)
-				int receivedCrc;
-				try {
-					receivedCrc = Integer.parseInt(ulaz.substring(4, 8), 16);
-				} catch (NumberFormatException e) {
-					logger.error("RUPTELA [{}]: Грешка парсирања CRC-16", clientId, e);
-					try {
-						out.write(nack);
-						out.flush();
-						logger.debug("RUPTELA [{}]: NACK послат - грешка парсирања CRC-16", clientId);
-					} catch (IOException ioex) {
-						logger.error("RUPTELA [{}]: Грешка слања NACK", clientId, ioex);
-					}
-					continue;
-				}
-				
-				// Провера CRC-16
-				if (calculatedCrc != receivedCrc) {
-									logger.warn("RUPTELA [{}]: CRC-16 невалидан (израчунато: 0x{}, примљено: 0x{})", 
-					            clientId, String.format("%04X", calculatedCrc), String.format("%04X", receivedCrc));
-					try {
-						out.write(nack);
-						out.flush();
-						logger.debug("RUPTELA [{}]: NACK послат - CRC-16 невалидан", clientId);
-					} catch (IOException e) {
-						logger.error("RUPTELA [{}]: Грешка слања NACK", clientId, e);
-					}
-					continue; // Прескочи овај пакет
-				}
-				
-				logger.trace("RUPTELA [{}]: TCP Packet Wrapper CRC-16 валидан (0x{})", clientId, String.format("%04X", calculatedCrc));
-				
-				offset += OFFSET_PACKET_LENGTH; // offset = 4 (прескаче Packet length)
-				offset += 4; // Прескаче CRC-16 (offset = 8)
+				offset = tcpWrapperOffset;
 				
 				// Pronalaženje uređaja (prvi put)
 				if (uredjaj == null) {
@@ -209,7 +183,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 					}
 				}
 				
-				offset += OFFSET_IMEI; // offset = 24 (8 + 16 за IMEI)
+				offset += OFFSET_IMEI; // offset = tcpWrapperOffset + 16 (20 или 24 зависно од формата)
 				
 				// Čitanje komande (command ID)
 				// Провера да ли има довољно података за команду
@@ -471,9 +445,9 @@ public class RuptelaOpstiThread extends OpstiThread {
 								
 								// Верификација CRC-16 за AVL Data Packet
 								// CRC се рачуна за: IMEI + Command + Records left + Number of records + Records + Number of records
-								// Дакле, од offset = 8 (после TCP Packet Wrapper) до offset + 2 (укључујући Number of records на крају)
+								// Дакле, од tcpWrapperOffset (после TCP Packet Wrapper или preamble) до offset + 2 (укључујући Number of records на крају)
 								if (obradaUspesna) {
-									int avlDataStart = 8; // Почетак AVL Data Packet-а (после TCP Packet Wrapper)
+									int avlDataStart = tcpWrapperOffset; // Почетак AVL Data Packet-а (после TCP Packet Wrapper или preamble)
 									
 									// Израчунај CRC за AVL Data Packet (од IMEI до Number of records на крају, без CRC-16)
 									// Конвертујемо hex string у byte array
@@ -773,7 +747,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 								
 								// Верификација CRC-16 за AVL Data Packet (Extended)
 								if (obradaUspesnaExtended) {
-									int avlDataStart = 8; // Почетак AVL Data Packet-а (после TCP Packet Wrapper)
+									int avlDataStart = tcpWrapperOffset; // Почетак AVL Data Packet-а (после TCP Packet Wrapper или preamble)
 									
 									// Израчунај CRC за AVL Data Packet (од IMEI до Number of records на крају, без CRC-16)
 									byte[] avlDataBytes = hexStringToByteArray(ulaz.substring(avlDataStart, offset + 2));
