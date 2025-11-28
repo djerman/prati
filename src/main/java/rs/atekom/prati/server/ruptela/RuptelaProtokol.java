@@ -193,7 +193,7 @@ public class RuptelaProtokol {
 			// HDOP (1 byte)
 			offset += 2;
 			
-			// Event ID (2 bytes) - STANDARD protocol
+			// Event ID (1 byte) - STANDARD protocol
 			int eventId = parseEventId(poruka, offset, false);
 			offset += 2;
 			

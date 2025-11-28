@@ -89,18 +89,53 @@ public class NeonOpstiThread extends OpstiThread {
 				
 				niz = ulaz.split(MESSAGE_DELIMITER);
 				
-				for (int i = 0; i < niz.length; i++) {
+				// Провера да ли је последња порука комплетна (завршава се са '>')
+				// Ако не завршава са '>', то значи да је сечена на граници буфера
+				boolean poslednjaKompletna = ulaz.endsWith(MESSAGE_DELIMITER);
+				
+				// Обрађујемо све елементе осим последњег ако није комплетна
+				int krajIndeksa = poslednjaKompletna ? niz.length : niz.length - 1;
+				
+				if (!poslednjaKompletna && niz.length > 0 && niz[niz.length - 1].length() > 0) {
+					logger.debug("NEON [{}]: Детектована некомплетна порука на крају пакета ({} карактера), чека се следећи пакет", 
+					            clientId, niz[niz.length - 1].length());
+				}
+				
+				for (int i = 0; i < krajIndeksa; i++) {
 					
 					// Provera da li je validan ORIS protokol
 					if (niz[i].startsWith(PROTOCOL_PREFIX_ORIS) || niz[i].startsWith(PROTOCOL_PREFIX_HASH_ORIS)) {
 						
 						da = niz[i].split(",");
 						
+						// Провера да ли порука има довољно поља (потребно најмање 3 за IMEI на позицији 2)
+						if (da.length < 3) {
+							logger.warn("NEON [{}]: Недостатак поља у поруци (потребно најмање 3, пронађено {}): '{}'", 
+							            clientId, da.length, niz[i]);
+							brojPromasaja++;
+							if (brojPromasaja > MAX_FAILED_ATTEMPTS) {
+								logger.error("NEON [{}]: Превише неважећих порука ({}), прекидам везу", 
+								             clientId, brojPromasaja);
+								break;
+							}
+							continue; // Прескочи ову поруку
+						}
+						
 						// Pronalaženje uređaja (prvi put)
 						if (uredjaj == null) {
-							kodUredjaja = da[2];
-							logger.debug("NEON [{}]: Pronalaženje uređaja '{}'", clientId, kodUredjaja);
-							pronadjiPostavi(kodUredjaja);
+							try {
+								kodUredjaja = da[2];
+								logger.debug("NEON [{}]: Pronalaženje uređaja '{}'", clientId, kodUredjaja);
+								pronadjiPostavi(kodUredjaja);
+							} catch (ArrayIndexOutOfBoundsException e) {
+								logger.error("NEON [{}]: Грешка приступа IMEI-ју (da[2]): {}", clientId, e.getMessage());
+								brojPromasaja++;
+								if (brojPromasaja > MAX_FAILED_ATTEMPTS) {
+									logger.error("NEON [{}]: Превише грешака, прекидам везу", clientId);
+									break;
+								}
+								continue;
+							}
 						}
 						
 						// ═══════════════════════════════════════════════════════════

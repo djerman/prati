@@ -101,7 +101,9 @@ public class OpstiServer implements Runnable {
 		
 		try {
 			serverSocket = new ServerSocket(listeningPort);
-			logger.info(" {} server pokrenut i sluša na portu {}", server, listeningPort);
+			// SO_REUSEADDR - омогућава брже поновно покретање сервера
+			serverSocket.setReuseAddress(true);
+			logger.info(" {} server pokrenut i sluša na portu {} (SO_REUSEADDR=true)", server, listeningPort);
 			
 			while(!isStopped()) {
 				Socket soket = null;

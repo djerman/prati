@@ -45,7 +45,6 @@ public class GenekoOpstiThread extends OpstiThread {
             clientId = "GENEKO-" + localSocket.getRemoteSocketAddress();
 
             setupSocket(localSocket, clientId);
-            localSocket.setSoTimeout(connectionTimeoutMs);
 
             input = localSocket.getInputStream();
             out = localSocket.getOutputStream();
@@ -114,7 +113,21 @@ public class GenekoOpstiThread extends OpstiThread {
         ulaz = new String(data, 0, bytesRead, StandardCharsets.UTF_8);
         frames = ulaz.split(FOX_FRAME_END);
 
-        for (String frame : frames) {
+        // Провера да ли је последњи frame комплетан (завршава се са '</fox>')
+        // Ако не завршава са '</fox>', то значи да је сечен на граници буфера
+        boolean poslednjiKompletan = ulaz.endsWith(FOX_FRAME_END);
+        
+        // Обрађујемо све frame-ове осим последњег ако није комплетан
+        int krajIndeksa = poslednjiKompletan ? frames.length : frames.length - 1;
+        
+        if (!poslednjiKompletan && frames.length > 0 && frames[frames.length - 1].length() > 0) {
+            logger.debug("GENEKO [{}]: Детектован некомплетан FOX frame на крају пакета ({} карактера), чека се следећи пакет", 
+                        clientId, frames[frames.length - 1].length());
+        }
+
+        for (int i = 0; i < krajIndeksa; i++) {
+            String frame = frames[i];
+            
             if (!frame.startsWith(FOX_FRAME_START)) {
                 logger.warn("GENEKO [{}]: неисправан FOX frame: {}", clientId, frame);
                 continue;

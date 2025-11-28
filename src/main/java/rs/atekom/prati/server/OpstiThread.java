@@ -47,7 +47,13 @@ public abstract class OpstiThread implements Runnable {
 	protected volatile boolean isStopped = false; // volatile за visibility
 	protected boolean prekoracenje = false;
 	protected byte[] data;
-	protected byte[] odg = {(byte)0x00, (byte)0x02, (byte)0x64, (byte)0x01, (byte)0x13, (byte)0xbc};
+	// ИСПРАВЉЕНО: ACK одговор према Ruptela протоколу v.1.80
+	// Структура: Packet length (2B) + Command (1B = 0x00) + ACK (1B = 0x01) + CRC-16 (2B)
+	// Packet length = 0x0002 (2 bytes без CRC-16)
+	// Command = 0x00 (ACK/NACK одговор)
+	// ACK = 0x01 (позитиван ACK)
+	// CRC-16 = прерачунат динамички при иницијализацији
+	protected static final byte[] odg = initializeAckResponse();
 	protected int offset;
 	protected OpstiServer server;
 	protected ArrayList<ObjekatZone> objekatZone;
@@ -104,7 +110,7 @@ public abstract class OpstiThread implements Runnable {
 	}
 	
 	/**
-	 * NOVI: Postavi socket sa timeout-ima
+	 * NOVI: Postavi socket sa timeout-ima i optimizovanim opcijama
 	 */
 	protected void setupSocket(Socket socket, String clientId) throws SocketException {
 		this.socket = socket;
@@ -113,7 +119,14 @@ public abstract class OpstiThread implements Runnable {
 		// Postavi timeout-e za čitanje/pisanje
 		socket.setSoTimeout(SOCKET_READ_TIMEOUT_MS);
 		
-		logger.debug("Socket [{}] konfigurisan sa timeout-om {}ms", clientId, SOCKET_READ_TIMEOUT_MS);
+		// TCP_NODELAY - искључује Nagle алгоритам за смањење кашњења
+		socket.setTcpNoDelay(true);
+		
+		// SO_KEEPALIVE - детектује прекинуте везе
+		socket.setKeepAlive(true);
+		
+		logger.debug("Socket [{}] konfigurisan sa timeout-ом {}ms, TCP_NODELAY=true, SO_KEEPALIVE=true", 
+		            clientId, SOCKET_READ_TIMEOUT_MS);
 	}
 
 	@Override
@@ -519,6 +532,90 @@ public abstract class OpstiThread implements Runnable {
 	public String getClientId() {
 		return clientId;
 	}
+	
+	/**
+	 * NOVO: CRC-16 Kermit алгоритам за Ruptela протокол
+	 * Према Ruptela protocol v.1.80 спецификацији
+	 * 
+	 * @param data Подаци за које се рачуна CRC
+	 * @return CRC-16 вредност
+	 */
+	/**
+	 * CRC-16 Kermit калкулација
+	 * Користи полином 0x8408 (CRC-16 Kermit reversed polynomial)
+	 * Усклађено са референци кодом из Ruptela програма
+	 */
+	protected static int calculateCrc16Kermit(byte[] data) {
+		int crc = 0x0000;
+		int polynomial = 0x8408; // CRC-16 Kermit полином (reversed)
+		
+		for (byte b : data) {
+			crc ^= (b & 0xFF);
+			for (int i = 0; i < 8; i++) {
+				boolean carry = (crc & 0x0001) != 0;
+				crc >>>= 1;
+				if (carry) {
+					crc ^= polynomial;
+				}
+			}
+		}
+		
+		return crc & 0xFFFF;
+	}
+	
+	/**
+	 * NOVO: Иницијализација ACK одговора са правилним CRC-16
+	 * Позива се једном при иницијализацији класе
+	 */
+	private static byte[] initializeAckResponse() {
+		// ACK структура: Packet length (2B) + Command (1B) + ACK (1B) + CRC-16 (2B)
+		// Packet length = 0x0002 (2 bytes без CRC-16)
+		// Command = 0x00
+		// ACK = 0x01 (позитиван)
+		byte[] ackData = {(byte)0x00, (byte)0x02, (byte)0x00, (byte)0x01};
+		int crc = calculateCrc16Kermit(ackData);
+		
+		// CRC се шаље као Big Endian (виши бајт први)
+		byte[] ack = new byte[6];
+		ack[0] = ackData[0]; // Packet length high byte
+		ack[1] = ackData[1]; // Packet length low byte
+		ack[2] = ackData[2]; // Command
+		ack[3] = ackData[3]; // ACK
+		ack[4] = (byte)((crc >>> 8) & 0xFF); // CRC high byte
+		ack[5] = (byte)(crc & 0xFF);         // CRC low byte
+		
+		return ack;
+	}
+	
+	/**
+	 * NOVO: Иницијализација NACK (Negative ACK) одговора са правилним CRC-16
+	 * Позива се једном при иницијализацији класе
+	 */
+	private static byte[] initializeNackResponse() {
+		// NACK структура: Packet length (2B) + Command (1B) + ACK (1B) + CRC-16 (2B)
+		// Packet length = 0x0002 (2 bytes без CRC-16)
+		// Command = 0x00
+		// ACK = 0x00 (негативан NACK)
+		byte[] nackData = {(byte)0x00, (byte)0x02, (byte)0x00, (byte)0x00};
+		int crc = calculateCrc16Kermit(nackData);
+		
+		// CRC се шаље као Big Endian (виши бајт први)
+		byte[] nack = new byte[6];
+		nack[0] = nackData[0]; // Packet length high byte
+		nack[1] = nackData[1]; // Packet length low byte
+		nack[2] = nackData[2]; // Command
+		nack[3] = nackData[3]; // ACK (0x00 = негативан)
+		nack[4] = (byte)((crc >>> 8) & 0xFF); // CRC high byte
+		nack[5] = (byte)(crc & 0xFF);         // CRC low byte
+		
+		return nack;
+	}
+	
+	/**
+	 * NOVO: NACK одговор за Ruptela протокол
+	 * Структура: Packet length (2B) + Command (1B = 0x00) + ACK (1B = 0x00) + CRC-16 (2B)
+	 */
+	protected static final byte[] nack = initializeNackResponse();
 	
 	/**
 	 * NOVO: Provera da li je thread zaustavljen
