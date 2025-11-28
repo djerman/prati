@@ -111,7 +111,14 @@ public class GenekoOpstiThread extends OpstiThread {
 
     private void processPayload(String clientId, int bytesRead) {
         ulaz = new String(data, 0, bytesRead, StandardCharsets.UTF_8);
+        
+        logger.warn("GENEKO [{}]: Примљен пакет ({} бајтова), садржај (првих 200 карактера): {}", 
+                    clientId, bytesRead, 
+                    ulaz.length() > 200 ? ulaz.substring(0, 200) + "..." : ulaz);
+        
         frames = ulaz.split(FOX_FRAME_END);
+        
+        logger.warn("GENEKO [{}]: Парсирано {} FOX frame-ова", clientId, frames.length);
 
         // Провера да ли је последњи frame комплетан (завршава се са '</fox>')
         // Ако не завршава са '</fox>', то значи да је сечен на граници буфера
@@ -121,37 +128,53 @@ public class GenekoOpstiThread extends OpstiThread {
         int krajIndeksa = poslednjiKompletan ? frames.length : frames.length - 1;
         
         if (!poslednjiKompletan && frames.length > 0 && frames[frames.length - 1].length() > 0) {
-            logger.debug("GENEKO [{}]: Детектован некомплетан FOX frame на крају пакета ({} карактера), чека се следећи пакет", 
+            logger.warn("GENEKO [{}]: Детектован некомплетан FOX frame на крају пакета ({} карактера), чека се следећи пакет", 
                         clientId, frames[frames.length - 1].length());
         }
 
         for (int i = 0; i < krajIndeksa; i++) {
             String frame = frames[i];
             
+            logger.warn("GENEKO [{}]: Обрада frame #{}: '{}'", clientId, i + 1, frame);
+            
             if (!frame.startsWith(FOX_FRAME_START)) {
-                logger.warn("GENEKO [{}]: неисправан FOX frame: {}", clientId, frame);
+                logger.warn("GENEKO [{}]: Неисправан FOX frame (не почиње са '<fox>'): '{}'", clientId, frame);
                 continue;
             }
 
             tokens = frame.split("\"");
 
+            logger.warn("GENEKO [{}]: FOX frame парсиран: tokens.length={}", clientId, tokens.length);
+
             if (tokens.length < 4) {
-                logger.warn("GENEKO [{}]: недовољно поља у FOX frame-у: {}", clientId, frame);
+                logger.warn("GENEKO [{}]: Недовољно поља у FOX frame-у (потребно најмање 4, пронађено {}): '{}'", 
+                            clientId, tokens.length, frame);
                 continue;
             }
 
             if (uredjaj == null) {
                 kodUredjaja = tokens[1];
+                logger.warn("GENEKO [{}]: Покушај проналажења уређаја '{}'", clientId, kodUredjaja);
                 pronadjiPostavi(kodUredjaja);
+                logger.warn("GENEKO [{}]: Уређај пронађен: uredjaj={}, objekat={}", 
+                            clientId, uredjaj != null ? uredjaj.getKod() : "null", 
+                            objekat != null ? objekat.getOznaka() : "null");
             }
 
             if (objekat == null) {
-                logger.warn("GENEKO [{}]: objekat null, frame прескочен: {}", clientId, frame);
+                logger.warn("GENEKO [{}]: Objekat је null, не могу обрадити. uredjaj={}, kodUredjaja={}, frame: '{}'", 
+                            clientId, uredjaj != null ? uredjaj.getKod() : "null", 
+                            kodUredjaja, frame);
                 continue;
             }
 
+            logger.warn("GENEKO [{}]: Позивање genekoObrada() са podaci='{}'", clientId, tokens[3]);
             Javljanja trenutno = server.gProtokol.genekoObrada(tokens[3], objekat);
+            logger.warn("GENEKO [{}]: genekoObrada() завршена: javljanje={}", 
+                        clientId, trenutno != null ? "OK" : "NULL");
+            
             obradaJavljanja(trenutno, null);
+            logger.warn("GENEKO [{}]: obradaJavljanja() завршена успешно", clientId);
         }
     }
 }

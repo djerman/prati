@@ -78,10 +78,10 @@ public class NeonOpstiThread extends OpstiThread {
 				ulaz = new String(data, 0, br);
 				totalPackets++;
 				
-				// Debug logging (samo prva 3 i svaki 100-ti paket)
-				if (totalPackets <= 3 || totalPackets % 100 == 0) {
-					logger.debug("NEON [{}]: Primljen paket #{} ({} bajtova)", clientId, totalPackets, br);
-				}
+				// WARN logging за дијагностику
+				logger.warn("NEON [{}]: Примљен пакет #{} ({} бајтова), садржај (првих 200 карактера): {}", 
+				            clientId, totalPackets, br, 
+				            ulaz.length() > 200 ? ulaz.substring(0, 200) + "..." : ulaz);
 				
 				// ═══════════════════════════════════════════════════════════
 				// ПАРСИРАЊЕ ПАКЕТА - ОРИГИНАЛНА ЛОГИКА (НЕПРОМЕЊЕНО!)
@@ -125,10 +125,15 @@ public class NeonOpstiThread extends OpstiThread {
 						if (uredjaj == null) {
 							try {
 								kodUredjaja = da[2];
-								logger.debug("NEON [{}]: Pronalaženje uređaja '{}'", clientId, kodUredjaja);
+								logger.warn("NEON [{}]: Покушај проналажења уређаја '{}' (порука: '{}')", 
+								            clientId, kodUredjaja, niz[i]);
 								pronadjiPostavi(kodUredjaja);
+								logger.warn("NEON [{}]: Уређај пронађен: uredjaj={}, objekat={}", 
+								            clientId, uredjaj != null ? uredjaj.getKod() : "null", 
+								            objekat != null ? objekat.getOznaka() : "null");
 							} catch (ArrayIndexOutOfBoundsException e) {
-								logger.error("NEON [{}]: Грешка приступа IMEI-ју (da[2]): {}", clientId, e.getMessage());
+								logger.warn("NEON [{}]: Грешка приступа IMEI-ју (da[2]), da.length={}, порука: '{}'", 
+								            clientId, da.length, niz[i], e);
 								brojPromasaja++;
 								if (brojPromasaja > MAX_FAILED_ATTEMPTS) {
 									logger.error("NEON [{}]: Превише грешака, прекидам везу", clientId);
@@ -147,28 +152,36 @@ public class NeonOpstiThread extends OpstiThread {
 								// ПОЗИВ PROTOCOL HANDLER-А (без измена!)
 								javljanjeTrenutno = server.nProtokol.neonObrada(da, ulaz, objekat);
 								
+								logger.warn("NEON [{}]: Javljanje обрађено: javljanjeTrenutno={}, порука: '{}'", 
+								            clientId, javljanjeTrenutno != null ? "OK" : "NULL", niz[i]);
+								
 								// ПОЗИВ OBRADE JAVLJANJA (без измена!)
 								obradaJavljanja(javljanjeTrenutno, null);
+								
+								logger.warn("NEON [{}]: obradaJavljanja() завршена успешно", clientId);
 								
 								// Reset brojača promašaja nakon uspešne obrade
 								brojPromasaja = 0;
 								
 							} catch (Exception e) {
-								logger.error("NEON [{}]: Greška pri obradi javljanja: {}", clientId, ulaz, e);
+								logger.warn("NEON [{}]: Грешка при обради javljanja, порука: '{}', грешка: {}", 
+								            clientId, niz[i], e.getMessage(), e);
 								brojPromasaja++;
 								
 								if (brojPromasaja > MAX_FAILED_ATTEMPTS) {
-									logger.warn("NEON [{}]: Previše grešaka ({}), prekidam vezu", clientId, brojPromasaja);
+									logger.warn("NEON [{}]: Превише грешака ({}), прекидам везу", clientId, brojPromasaja);
 									break;
 								}
 							}
 							
 						} else {
-							logger.warn("NEON [{}]: Objekat je null, ne mogu obraditi: {}", clientId, ulaz);
+							logger.warn("NEON [{}]: Objekat је null, не могу обрадити. uredjaj={}, kodUredjaja={}, порука: '{}'", 
+							            clientId, uredjaj != null ? uredjaj.getKod() : "null", 
+							            kodUredjaja, niz[i]);
 							brojPromasaja++;
 							
 							if (brojPromasaja > MAX_FAILED_ATTEMPTS) {
-								logger.warn("NEON [{}]: Previše neuspešnih pokušaja, prekidam vezu", clientId);
+								logger.warn("NEON [{}]: Превише неуспешних покушаја, прекидам везу", clientId);
 								break;
 							}
 						}

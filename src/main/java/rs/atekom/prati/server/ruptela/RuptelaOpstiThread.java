@@ -157,10 +157,16 @@ public class RuptelaOpstiThread extends OpstiThread {
 				// Ако нема TCP Packet Wrapper, прескачемо прва 4 бајта као "preamble" (као у оригиналном коду)
 				if (!hasTcpWrapper) {
 					tcpWrapperOffset = 4; // Прескачемо "preamble" од 4 бајта
-					logger.trace("RUPTELA [{}]: Користи се стари формат (без TCP Packet Wrapper)", clientId);
+					logger.warn("RUPTELA [{}]: Користи се стари формат (без TCP Packet Wrapper), tcpWrapperOffset={}", 
+					            clientId, tcpWrapperOffset);
+				} else {
+					logger.warn("RUPTELA [{}]: Детектован TCP Packet Wrapper, tcpWrapperOffset={}, packetLength={}", 
+					            clientId, tcpWrapperOffset, packetLength);
 				}
 				
 				offset = tcpWrapperOffset;
+				logger.warn("RUPTELA [{}]: Почетни offset постављен на {} (hex дужина пакета: {})", 
+				            clientId, offset, ulaz.length());
 				
 				// Pronalaženje uređaja (prvi put)
 				if (uredjaj == null) {
@@ -213,11 +219,15 @@ public class RuptelaOpstiThread extends OpstiThread {
 					// ═══════════════════════════════════════════════════════════
 					// ЧИТАЊЕ RECORDS LEFT И NUMBER OF RECORDS
 					// ═══════════════════════════════════════════════════════════
+					// 
+					// ВАЖНО: Према оригиналном коду, после Command-а се offset увећава за 4
+					// (Command (2) + Records left (2)), па се затим чита Number of records
+					// Ова логика је задржана за компатибилност са оригиналним кодом
 					
 					// Провера да ли има довољно података за Records left (1 byte) + Number of records (1 byte)
-					if (ulaz.length() < offset + 4) {
+					if (ulaz.length() < offset + 6) { // Command (2) + Records left (2) + Number of records (2)
 						logger.warn("RUPTELA [{}]: Недостатак података за Records left и Number of records (потребно {} карактера, доступно {})", 
-						            clientId, offset + 4, ulaz.length());
+						            clientId, offset + 6, ulaz.length());
 						try {
 							out.write(nack);
 							out.flush();
@@ -227,6 +237,9 @@ public class RuptelaOpstiThread extends OpstiThread {
 						}
 						continue; // Прескочи овај пакет
 					}
+					
+					// Према оригиналном коду: offset += 4 (Command + Records left)
+					offset += OFFSET_COMMAND; // Прескочи Command (2 hex chars)
 					
 					// Читање Records left (1 byte = 2 hex chars)
 					int recordsLeft = -1;
@@ -249,9 +262,13 @@ public class RuptelaOpstiThread extends OpstiThread {
 					// Читање Number of records (1 byte = 2 hex chars)
 					int ukZapisa = -1;
 					try {
-						ukZapisa = Integer.parseInt(ulaz.substring(offset, offset + 2), 16);
+						String numRecordsHex = ulaz.substring(offset, offset + 2);
+						ukZapisa = Integer.parseInt(numRecordsHex, 16);
+						logger.warn("RUPTELA [{}]: Number of records прочитан: {} (hex: 0x{}, offset: {}, recordsLeft: {})", 
+						            clientId, ukZapisa, numRecordsHex, offset, recordsLeft);
 					} catch (NumberFormatException | StringIndexOutOfBoundsException e) {
-						logger.error("RUPTELA [{}]: Грешка парсирања Number of records: {}", clientId, e.getMessage());
+						logger.error("RUPTELA [{}]: Грешка парсирања Number of records на offset {}: {}", 
+						            clientId, offset, e.getMessage());
 						try {
 							out.write(nack);
 							out.flush();
@@ -272,9 +289,9 @@ public class RuptelaOpstiThread extends OpstiThread {
 					
 					if (objekat != null) {
 						
-						logger.debug("RUPTELA [{}]: Objekat={}, Ukupno zapisa={}, Records left={}, Komanda=0x{}", 
+						logger.warn("RUPTELA [{}]: Objekat={}, Ukupno zapisa={}, Records left={}, Komanda=0x{}, offset={}", 
 						             clientId, objekat.getOznaka(), ukZapisa, recordsLeft, 
-						             Integer.toHexString(komanda).toUpperCase());
+						             Integer.toHexString(komanda).toUpperCase(), offset);
 						
 						int brZapisa = 0;
 						
@@ -438,9 +455,12 @@ public class RuptelaOpstiThread extends OpstiThread {
 								}
 								
 								if (obradaUspesna && numRecordsEnd != ukZapisa) {
-									logger.warn("RUPTELA [{}]: Number of records се не поклапа (почетак: {}, крај: {})", 
-									            clientId, ukZapisa, numRecordsEnd);
+									logger.warn("RUPTELA [{}]: Number of records се не поклапа (почетак: {}, крај: {}, offset: {}, обрађено записа: {})", 
+									            clientId, ukZapisa, numRecordsEnd, offset, brZapisa);
 									obradaUspesna = false;
+								} else if (obradaUspesna) {
+									logger.warn("RUPTELA [{}]: Number of records се поклапа (почетак: {}, крај: {}, обрађено записа: {})", 
+									            clientId, ukZapisa, numRecordsEnd, brZapisa);
 								}
 								
 								// Верификација CRC-16 за AVL Data Packet
