@@ -12,10 +12,13 @@
   </appender>
 
   <!-- Омогући и DEBUG (али ће INFO бити филтриран) -->
-  <root level="DEBUG">
+  <root level="WARN">
     <appender-ref ref="CONSOLE"/>
   </root>
 
   <!-- По жељи сузи на твој пакет -->
   <!-- <logger name="rs.atekom.prati.server" level="DEBUG"/> -->
+  <logger name="com.google.maps" level="ERROR"/>
+  <logger name="org.atmosphere" level="ERROR"/>
+  <logger name="org.hibernate" level="WARN"/>
 </configuration>
