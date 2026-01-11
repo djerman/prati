@@ -47,13 +47,9 @@ public abstract class OpstiThread implements Runnable {
 	protected volatile boolean isStopped = false; // volatile за visibility
 	protected boolean prekoracenje = false;
 	protected byte[] data;
-	// ИСПРАВЉЕНО: ACK одговор према Ruptela протоколу v.1.80
-	// Структура: Packet length (2B) + Command (1B = 0x00) + ACK (1B = 0x01) + CRC-16 (2B)
-	// Packet length = 0x0002 (2 bytes без CRC-16)
-	// Command = 0x00 (ACK/NACK одговор)
-	// ACK = 0x01 (позитиван ACK)
-	// CRC-16 = прерачунат динамички при иницијализацији
-	protected static byte[] odg = initializeAckResponse();
+	// Legacy ACK (radio u produkciji) za Ruptela uređaje.
+	// Format: 00 02 64 01 13 BC
+	protected static final byte[] odg = {(byte)0x00, (byte)0x02, (byte)0x64, (byte)0x01, (byte)0x13, (byte)0xBC};
 	protected int offset;
 	protected OpstiServer server;
 	protected ArrayList<ObjekatZone> objekatZone;
