@@ -34,7 +34,7 @@ public abstract class OpstiThread implements Runnable {
 	private static final long SKEW_MS = 60_000L;
 	
 	// SOCKET TIMEOUT КОНСТАНТЕ
-	protected static final int SOCKET_READ_TIMEOUT_MS = 30000; // 30 секунди
+	protected static final int SOCKET_READ_TIMEOUT_MS = 300000; // 30 секунди
 	protected static final int SOCKET_WRITE_TIMEOUT_MS = 5000;  // 5 секунди
 	
 	// ЗАМЕНА: instance variable уместо static
@@ -53,7 +53,7 @@ public abstract class OpstiThread implements Runnable {
 	// Command = 0x00 (ACK/NACK одговор)
 	// ACK = 0x01 (позитиван ACK)
 	// CRC-16 = прерачунат динамички при иницијализацији
-	protected static final byte[] odg = initializeAckResponse();
+	protected static byte[] odg = initializeAckResponse();
 	protected int offset;
 	protected OpstiServer server;
 	protected ArrayList<ObjekatZone> objekatZone;
@@ -82,7 +82,7 @@ public abstract class OpstiThread implements Runnable {
 		// Default (био 10) 5 минута
 		// Druga opcija je da se smanji na 60-90s pa da se broje uzastopni tajmauti
 		// ako pređe recimo 6-8 da onda izlazi
-		this(queue, srv, 300 * 1000);
+		this(queue, srv, SOCKET_READ_TIMEOUT_MS);
 	}
 	
 	// НОВИ: Constructor са customizable timeout-ом

@@ -85,6 +85,15 @@ public class RuptelaOpstiThread extends OpstiThread {
 					break;
 				}
 				
+				/*try {
+				    out.write(odg);
+				    out.flush();
+				    logger.trace("RUPTELA [{}]: ACK poslat odmah po prijemu paketa ({} bajtova)", clientId, br);
+				} catch (IOException e) {
+				    logger.error("RUPTELA [{}]: Greška slanja ACK odmah po prijemu", clientId, e);
+				    break;
+				}*/
+
 				offset = 0;
 				//ulaz = DatatypeConverter.printHexBinary(data);
 				ulaz = DatatypeConverter.printHexBinary(java.util.Arrays.copyOf(data, br));
