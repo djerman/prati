@@ -115,13 +115,13 @@ public class GenekoOpstiThread extends OpstiThread {
     private void processPayload(String clientId, int bytesRead) {
         ulaz = new String(data, 0, bytesRead, StandardCharsets.UTF_8);
         
-        logger.warn("GENEKO [{}]: Примљен пакет ({} бајтова), садржај (првих 200 карактера): {}", 
+        logger.debug("GENEKO [{}]: Примљен пакет ({} бајтова), садржај (првих 200 карактера): {}", 
                     clientId, bytesRead, 
                     ulaz.length() > 200 ? ulaz.substring(0, 200) + "..." : ulaz);
         
         frames = ulaz.split(FOX_FRAME_END);
         
-        logger.warn("GENEKO [{}]: Парсирано {} FOX frame-ова", clientId, frames.length);
+        logger.debug("GENEKO [{}]: Парсирано {} FOX frame-ова", clientId, frames.length);
 
         // Провера да ли је последњи frame комплетан (завршава се са '</fox>')
         // Ако не завршава са '</fox>', то значи да је сечен на граници буфера
@@ -131,14 +131,14 @@ public class GenekoOpstiThread extends OpstiThread {
         int krajIndeksa = poslednjiKompletan ? frames.length : frames.length - 1;
         
         if (!poslednjiKompletan && frames.length > 0 && frames[frames.length - 1].length() > 0) {
-            logger.warn("GENEKO [{}]: Детектован некомплетан FOX frame на крају пакета ({} карактера), чека се следећи пакет", 
+            logger.debug("GENEKO [{}]: Детектован некомплетан FOX frame на крају пакета ({} карактера), чека се следећи пакет", 
                         clientId, frames[frames.length - 1].length());
         }
 
         for (int i = 0; i < krajIndeksa; i++) {
             String frame = frames[i];
             
-            logger.warn("GENEKO [{}]: Обрада frame #{}: '{}'", clientId, i + 1, frame);
+            logger.debug("GENEKO [{}]: Обрада frame #{}: '{}'", clientId, i + 1, frame);
             
             if (!frame.startsWith(FOX_FRAME_START)) {
                 String preview = frame.length() > 20 ? frame.substring(0, 20) : frame;
@@ -156,7 +156,7 @@ public class GenekoOpstiThread extends OpstiThread {
 
             tokens = frame.split("\"");
 
-            logger.warn("GENEKO [{}]: FOX frame парсиран: tokens.length={}", clientId, tokens.length);
+            logger.debug("GENEKO [{}]: FOX frame парсиран: tokens.length={}", clientId, tokens.length);
 
             if (tokens.length < 4) {
                 logger.warn("GENEKO [{}]: Недовољно поља у FOX frame-у (потребно најмање 4, пронађено {}): '{}'", 
@@ -166,9 +166,9 @@ public class GenekoOpstiThread extends OpstiThread {
 
             if (uredjaj == null) {
                 kodUredjaja = tokens[1];
-                logger.warn("GENEKO [{}]: Покушај проналажења уређаја '{}'", clientId, kodUredjaja);
+                logger.debug("GENEKO [{}]: Покушај проналажења уређаја '{}'", clientId, kodUredjaja);
                 pronadjiPostavi(kodUredjaja);
-                logger.warn("GENEKO [{}]: Уређај пронађен: uredjaj={}, objekat={}", 
+                logger.debug("GENEKO [{}]: Уређај пронађен: uredjaj={}, objekat={}", 
                             clientId, uredjaj != null ? uredjaj.getKod() : "null", 
                             objekat != null ? objekat.getOznaka() : "null");
             }
@@ -180,13 +180,13 @@ public class GenekoOpstiThread extends OpstiThread {
                 continue;
             }
 
-            logger.warn("GENEKO [{}]: Позивање genekoObrada() са podaci='{}'", clientId, tokens[3]);
+            logger.debug("GENEKO [{}]: Позивање genekoObrada() са podaci='{}'", clientId, tokens[3]);
             Javljanja trenutno = server.gProtokol.genekoObrada(tokens[3], objekat);
-            logger.warn("GENEKO [{}]: genekoObrada() завршена: javljanje={}", 
+            logger.debug("GENEKO [{}]: genekoObrada() завршена: javljanje={}", 
                         clientId, trenutno != null ? "OK" : "NULL");
             
             obradaJavljanja(trenutno, null);
-            logger.warn("GENEKO [{}]: obradaJavljanja() завршена успешно", clientId);
+            logger.debug("GENEKO [{}]: obradaJavljanja() завршена успешно", clientId);
         }
     }
 }

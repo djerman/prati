@@ -78,8 +78,8 @@ public class NeonOpstiThread extends OpstiThread {
 				ulaz = new String(data, 0, br);
 				totalPackets++;
 				
-				// WARN logging за дијагностику
-				logger.warn("NEON [{}]: Примљен пакет #{} ({} бајтова), садржај (првих 200 карактера): {}", 
+				// DEBUG logging за дијагностику
+				logger.debug("NEON [{}]: Примљен пакет #{} ({} бајтова), садржај (првих 200 карактера): {}", 
 				            clientId, totalPackets, br, 
 				            ulaz.length() > 200 ? ulaz.substring(0, 200) + "..." : ulaz);
 				
@@ -126,10 +126,10 @@ public class NeonOpstiThread extends OpstiThread {
 						if (uredjaj == null) {
 							try {
 								kodUredjaja = da[2];
-								logger.warn("NEON [{}]: Покушај проналажења уређаја '{}' (порука: '{}')", 
+								logger.debug("NEON [{}]: Покушај проналажења уређаја '{}' (порука: '{}')", 
 								            clientId, kodUredjaja, niz[i]);
 								pronadjiPostavi(kodUredjaja);
-								logger.warn("NEON [{}]: Уређај пронађен: uredjaj={}, objekat={}", 
+								logger.debug("NEON [{}]: Уређај пронађен: uredjaj={}, objekat={}", 
 								            clientId, uredjaj != null ? uredjaj.getKod() : "null", 
 								            objekat != null ? objekat.getOznaka() : "null");
 							} catch (ArrayIndexOutOfBoundsException e) {
@@ -153,13 +153,13 @@ public class NeonOpstiThread extends OpstiThread {
 								// ПОЗИВ PROTOCOL HANDLER-А (без измена!)
 								javljanjeTrenutno = server.nProtokol.neonObrada(da, ulaz, objekat);
 								
-								logger.warn("NEON [{}]: Javljanje обрађено: javljanjeTrenutno={}, порука: '{}'", 
+								logger.debug("NEON [{}]: Javljanje обрађено: javljanjeTrenutno={}, порука: '{}'", 
 								            clientId, javljanjeTrenutno != null ? "OK" : "NULL", niz[i]);
 								
 								// ПОЗИВ OBRADE JAVLJANJA (без измена!)
 								obradaJavljanja(javljanjeTrenutno, null);
 								
-								logger.warn("NEON [{}]: obradaJavljanja() завршена успешно", clientId);
+								logger.debug("NEON [{}]: obradaJavljanja() завршена успешно", clientId);
 								
 								// Reset brojača promašaja nakon uspešne obrade
 								brojPromasaja = 0;
