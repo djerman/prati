@@ -95,6 +95,7 @@ public class NeonOpstiThread extends OpstiThread {
 				
 				// Обрађујемо све елементе осим последњег ако није комплетна
 				int krajIndeksa = poslednjaKompletna ? niz.length : niz.length - 1;
+				boolean closeConnection = false;
 				
 				if (!poslednjaKompletna && niz.length > 0 && niz[niz.length - 1].length() > 0) {
 					logger.debug("NEON [{}]: Детектована некомплетна порука на крају пакета ({} карактера), чека се следећи пакет", 
@@ -189,16 +190,23 @@ public class NeonOpstiThread extends OpstiThread {
 					} else {
 						// Nevažeći format poruke
 						if (!niz[i].equals("#")) {
-							logger.warn("NEON [{}]: Nevažeći format (očekivan ORIS): '{}'", clientId, niz[i]);
+							String preview = niz[i].length() > 20 ? niz[i].substring(0, 20) : niz[i];
+							logger.warn("NEON [{}]: Nevažeći format (očekivan ORIS), početak poruke: '{}'", 
+							            clientId, preview);
 							brojPromasaja++;
 							
-							if (brojPromasaja > MAX_FAILED_ATTEMPTS) {
+							if (brojPromasaja >= MAX_FAILED_ATTEMPTS) {
 								logger.error("NEON [{}]: Previše nevažećih poruka ({}), prekidam vezu", 
 								             clientId, brojPromasaja);
+								closeConnection = true;
 								break;
 							}
 						}
 					}
+				}
+				
+				if (closeConnection) {
+					break;
 				}
 				
 				// ═══════════════════════════════════════════════════════════

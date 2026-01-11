@@ -49,6 +49,17 @@ public class RuptelaOpstiThread extends OpstiThread {
 	public RuptelaOpstiThread(LinkedBlockingQueue<Socket> queue, OpstiServer server) {
 		super(queue, server);
 	}
+
+	// ACK is sent after IMEI is recognized to avoid device resends; invalid IMEI ends the connection.
+	private void sendAckSafe(String clientId, String reason) {
+		try {
+			out.write(odg);
+			out.flush();
+			logger.debug("RUPTELA [{}]: ACK poslat ({})", clientId, reason);
+		} catch (IOException e) {
+			logger.error("RUPTELA [{}]: Greška slanja ACK ({})", clientId, reason, e);
+		}
+	}
 	
 	@Override
 	public void run() {
@@ -95,6 +106,8 @@ public class RuptelaOpstiThread extends OpstiThread {
 				}*/
 
 				offset = 0;
+				// If IMEI was already parsed on this connection, always ACK even on partial/invalid data.
+				boolean imeiKnown = kodUredjaja != null && !kodUredjaja.isEmpty();
 				//ulaz = DatatypeConverter.printHexBinary(data);
 				ulaz = DatatypeConverter.printHexBinary(java.util.Arrays.copyOf(data, br));
 				totalPackets++;
@@ -113,6 +126,9 @@ public class RuptelaOpstiThread extends OpstiThread {
 				if (ulaz.length() < 4) {
 					logger.warn("RUPTELA [{}]: Пакет прекратак ({} hex карактера, минимално 4)", 
 					            clientId, ulaz.length());
+					if (imeiKnown) {
+						sendAckSafe(clientId, "prekratak paket");
+					}
 					continue; // Прескочи овај пакет
 				}
 				
@@ -125,7 +141,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 					if (ulaz.length() < offset + OFFSET_IMEI) {
 						logger.warn("RUPTELA [{}]: Недостатак података за IMEI (потребно {} карактера, доступно {})", 
 						            clientId, offset + OFFSET_IMEI, ulaz.length());
-						continue; // Прескочи овај пакет
+						break; // Нема валидан IMEI -> прекини конекцију
 					}
 					
 					try {
@@ -134,16 +150,17 @@ public class RuptelaOpstiThread extends OpstiThread {
 						// Валидација IMEI-ја
 						if (imei <= 0 || imei > 999999999999999L) {
 							logger.warn("RUPTELA [{}]: Невалидан IMEI: {}", clientId, imei);
-							continue; // Прескочи овај пакет
+							break; // Невалидан IMEI -> прекини конекцију
 						}
 						
 						kodUredjaja = imei.toString();
+						imeiKnown = true;
 						
 						logger.debug("RUPTELA [{}]: Pronalaženje uređaja IMEI={}", clientId, kodUredjaja);
 						pronadjiPostavi(kodUredjaja);
 					} catch (NumberFormatException | StringIndexOutOfBoundsException e) {
 						logger.error("RUPTELA [{}]: Грешка парсирања IMEI-ја: {}", clientId, e.getMessage());
-						continue; // Прескочи овај пакет
+						break; // Невалидан IMEI -> прекини конекцију
 					}
 				}
 				
@@ -154,6 +171,9 @@ public class RuptelaOpstiThread extends OpstiThread {
 				if (ulaz.length() < offset + OFFSET_COMMAND) {
 					logger.warn("RUPTELA [{}]: Недостатак података за команду (потребно {} карактера, доступно {})", 
 					            clientId, offset + OFFSET_COMMAND, ulaz.length());
+					if (imeiKnown) {
+						sendAckSafe(clientId, "nema dovoljno podataka za komandu");
+					}
 					continue; // Прескочи овај пакет
 				}
 				
@@ -162,6 +182,9 @@ public class RuptelaOpstiThread extends OpstiThread {
 					komanda = Integer.parseInt(ulaz.substring(offset, offset + OFFSET_COMMAND), 16);
 				} catch (NumberFormatException | StringIndexOutOfBoundsException e) {
 					logger.error("RUPTELA [{}]: Грешка парсирања команде: {}", clientId, e.getMessage());
+					if (imeiKnown) {
+						sendAckSafe(clientId, "greska parsiranja komande");
+					}
 					continue; // Прескочи овај пакет
 				}
 				
@@ -186,12 +209,8 @@ public class RuptelaOpstiThread extends OpstiThread {
 					if (ulaz.length() < offset + 6) { // Command (2) + Records left (2) + Number of records (2)
 						logger.warn("RUPTELA [{}]: Недостатак података за Records left и Number of records (потребно {} карактера, доступно {})", 
 						            clientId, offset + 6, ulaz.length());
-						try {
-							out.write(nack);
-							out.flush();
-							logger.debug("RUPTELA [{}]: NACK послат - недостатак података за Records left/Number of records", clientId);
-						} catch (IOException e) {
-							logger.error("RUPTELA [{}]: Грешка слања NACK", clientId, e);
+						if (imeiKnown) {
+							sendAckSafe(clientId, "nema dovoljno podataka za records left/number of records");
 						}
 						continue; // Прескочи овај пакет
 					}
@@ -205,12 +224,8 @@ public class RuptelaOpstiThread extends OpstiThread {
 						recordsLeft = Integer.parseInt(ulaz.substring(offset, offset + 2), 16);
 					} catch (NumberFormatException | StringIndexOutOfBoundsException e) {
 						logger.error("RUPTELA [{}]: Грешка парсирања Records left: {}", clientId, e.getMessage());
-						try {
-							out.write(nack);
-							out.flush();
-							logger.debug("RUPTELA [{}]: NACK послат - грешка парсирања Records left", clientId);
-						} catch (IOException ioex) {
-							logger.error("RUPTELA [{}]: Грешка слања NACK", clientId, ioex);
+						if (imeiKnown) {
+							sendAckSafe(clientId, "greska parsiranja records left");
 						}
 						continue; // Прескочи овај пакет
 					}
@@ -226,12 +241,8 @@ public class RuptelaOpstiThread extends OpstiThread {
 						// Валидација броја записа
 						if (ukZapisa <= 0 || ukZapisa > 255) {
 							logger.warn("RUPTELA [{}]: Невалидан број записа: {} (очекивано 1-255)", clientId, ukZapisa);
-							try {
-								out.write(nack);
-								out.flush();
-								logger.debug("RUPTELA [{}]: NACK послат - невалидан број записа", clientId);
-							} catch (IOException ioex) {
-								logger.error("RUPTELA [{}]: Грешка слања NACK", clientId, ioex);
+							if (imeiKnown) {
+								sendAckSafe(clientId, "nevalidan broj zapisa");
 							}
 							continue; // Прескочи овај пакет
 						}
@@ -241,12 +252,8 @@ public class RuptelaOpstiThread extends OpstiThread {
 					} catch (NumberFormatException | StringIndexOutOfBoundsException e) {
 						logger.error("RUPTELA [{}]: Грешка парсирања Number of records на offset {}: {}", 
 						            clientId, offset, e.getMessage());
-						try {
-							out.write(nack);
-							out.flush();
-							logger.debug("RUPTELA [{}]: NACK послат - грешка парсирања Number of records", clientId);
-						} catch (IOException ioex) {
-							logger.error("RUPTELA [{}]: Грешка слања NACK", clientId, ioex);
+						if (imeiKnown) {
+							sendAckSafe(clientId, "greska parsiranja number of records");
 						}
 						continue; // Прескочи овај пакет
 					}
@@ -620,17 +627,26 @@ public class RuptelaOpstiThread extends OpstiThread {
 							} else {
 								logger.warn("RUPTELA [{}]: Нема валидног првог записа за упис (обрађено {}/{} extended записа)", 
 								            clientId, brZapisa, ukZapisa);
+								if (imeiKnown) {
+									sendAckSafe(clientId, "nema validnog prvog zapisa (extended)");
+								}
 							}
 						}
 						
 					} else {
 						logger.warn("RUPTELA [{}]: Objekat je null, ne mogu obraditi paket", clientId);
+						if (imeiKnown) {
+							sendAckSafe(clientId, "objekat nije pronadjen");
+						}
 					}
 					
 				} else {
 					// Непозната команда
 					logger.warn("RUPTELA [{}]: Nepoznata komanda: {} (0x{})", 
 					            clientId, komanda, Integer.toHexString(komanda).toUpperCase());
+					if (imeiKnown) {
+						sendAckSafe(clientId, "nepoznata komanda");
+					}
 				}
 				
 				// ═══════════════════════════════════════════════════════════

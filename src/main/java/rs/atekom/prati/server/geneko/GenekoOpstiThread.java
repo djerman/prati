@@ -27,12 +27,15 @@ public class GenekoOpstiThread extends OpstiThread {
 
     private static final String FOX_FRAME_START = "<fox>";
     private static final String FOX_FRAME_END = "</fox>";
+    private static final int MAX_INVALID_FRAME_ATTEMPTS = 3;
 
     private String[] frames;
     private String[] tokens;
+    private int invalidFrameAttempts;
 
     public GenekoOpstiThread(LinkedBlockingQueue<Socket> queue, OpstiServer srv) {
         super(queue, srv);
+        invalidFrameAttempts = 0;
     }
 
     @Override
@@ -138,7 +141,16 @@ public class GenekoOpstiThread extends OpstiThread {
             logger.warn("GENEKO [{}]: Обрада frame #{}: '{}'", clientId, i + 1, frame);
             
             if (!frame.startsWith(FOX_FRAME_START)) {
-                logger.warn("GENEKO [{}]: Неисправан FOX frame (не почиње са '<fox>'): '{}'", clientId, frame);
+                String preview = frame.length() > 20 ? frame.substring(0, 20) : frame;
+                logger.warn("GENEKO [{}]: Неисправан FOX frame (не почиње са '<fox>'), почетак: '{}'", 
+                            clientId, preview);
+                invalidFrameAttempts++;
+                if (invalidFrameAttempts >= MAX_INVALID_FRAME_ATTEMPTS) {
+                    logger.error("GENEKO [{}]: Превише неважећих frame-ова ({}), прекидам везу", 
+                                clientId, invalidFrameAttempts);
+                    stop();
+                    return;
+                }
                 continue;
             }
 
