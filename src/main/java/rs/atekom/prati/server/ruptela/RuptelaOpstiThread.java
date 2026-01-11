@@ -46,6 +46,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 	// ДОДАТ: Offset константе за парсирање
 	private static final int OFFSET_IMEI = 16;
 	private static final int OFFSET_COMMAND = 2;
+	private static final int MAX_PACKET_LENGTH = 1024; // payload length (without length field and CRC)
 
 	public RuptelaOpstiThread(LinkedBlockingQueue<Socket> queue, OpstiServer server) {
 		super(queue, server);
@@ -60,6 +61,12 @@ public class RuptelaOpstiThread extends OpstiThread {
 		} catch (IOException e) {
 			logger.error("RUPTELA [{}]: Greška slanja ACK ({})", clientId, reason, e);
 		}
+	}
+	
+	private void logPacketFailure(String clientId, String reason, byte[] packet) {
+		String imei = kodUredjaja != null ? kodUredjaja : "unknown";
+		String packetHex = packet != null ? DatatypeConverter.printHexBinary(packet) : "null";
+		logger.warn("RUPTELA [{}]: Neobrađen paket (imei={}, razlog={}): {}", clientId, imei, reason, packetHex);
 	}
 	
 	@Override
@@ -105,10 +112,11 @@ public class RuptelaOpstiThread extends OpstiThread {
 				
 				while (bufferBytes.length - consumed >= 4) {
 					int length = ((bufferBytes[consumed] & 0xFF) << 8) | (bufferBytes[consumed + 1] & 0xFF);
-					if (length <= 0 || length > 1024) {
+					if (length <= 0 || length > MAX_PACKET_LENGTH) {
 						logger.warn("RUPTELA [{}]: Nevalidna dužina paketa: {}", clientId, length);
-						consumed = bufferBytes.length;
-						break;
+						// Fallback: pomeri se za jedan bajt i pokušaj ponovo da uhvatiš sledeći paket.
+						consumed += 1;
+						continue;
 					}
 					
 					int totalLen = 2 + length + 2; // length (2B) + payload + CRC16 (2B)
@@ -182,19 +190,23 @@ public class RuptelaOpstiThread extends OpstiThread {
 	}
 
 	private boolean processPacket(byte[] packet, String clientId, int totalPackets) {
+		String failureReason = null;
 		if (packet == null || packet.length < 4) {
 			logger.warn("RUPTELA [{}]: Пакет прекратак ({} bajtova)", clientId, packet != null ? packet.length : 0);
+			logPacketFailure(clientId, "paket prekratak", packet);
 			return true;
 		}
 
 		byte[] payload = packet.length > 2 ? Arrays.copyOf(packet, packet.length - 2) : packet;
 		if (packet.length >= 4) {
 			int expectedCrc = ((packet[packet.length - 2] & 0xFF) << 8) | (packet[packet.length - 1] & 0xFF);
-			int actualCrc = calculateCrc16Kermit(payload);
-			if (expectedCrc != actualCrc) {
-				logger.warn("RUPTELA [{}]: CRC mismatch (expected=0x{}, actual=0x{})", clientId,
+			int crcExcludingLength = calculateCrc16Kermit(Arrays.copyOfRange(packet, 2, packet.length - 2));
+			int crcIncludingLength = calculateCrc16Kermit(payload);
+			if (expectedCrc != crcExcludingLength && expectedCrc != crcIncludingLength) {
+				logger.warn("RUPTELA [{}]: CRC mismatch (expected=0x{}, exclLen=0x{}, inclLen=0x{})", clientId,
 				            Integer.toHexString(expectedCrc).toUpperCase(),
-				            Integer.toHexString(actualCrc).toUpperCase());
+				            Integer.toHexString(crcExcludingLength).toUpperCase(),
+				            Integer.toHexString(crcIncludingLength).toUpperCase());
 			}
 		}
 		offset = 0;
@@ -214,6 +226,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 			if (imeiKnown) {
 				sendAckSafe(clientId, "prekratak paket");
 			}
+			logPacketFailure(clientId, "prekratak paket (hex)", packet);
 			return true;
 		}
 
@@ -226,6 +239,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 			if (ulaz.length() < offset + OFFSET_IMEI) {
 				logger.warn("RUPTELA [{}]: Недостатак података за IMEI (потребно {} карактера, доступно {})",
 				            clientId, offset + OFFSET_IMEI, ulaz.length());
+				logPacketFailure(clientId, "nedostatak podataka za IMEI", packet);
 				return false; // Нема валидан IMEI -> прекини конекцију
 			}
 
@@ -235,6 +249,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 				// Валидација IMEI-ја
 				if (imei <= 0 || imei > 999999999999999L) {
 					logger.warn("RUPTELA [{}]: Невалидан IMEI: {}", clientId, imei);
+					logPacketFailure(clientId, "nevalidan IMEI", packet);
 					return false; // Невалидан IMEI -> прекини конекцију
 				}
 
@@ -245,6 +260,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 				pronadjiPostavi(kodUredjaja);
 			} catch (NumberFormatException | StringIndexOutOfBoundsException e) {
 				logger.error("RUPTELA [{}]: Грешка парсирања IMEI-ја: {}", clientId, e.getMessage());
+				logPacketFailure(clientId, "greska parsiranja IMEI", packet);
 				return false; // Невалидан IMEI -> прекини конекцију
 			}
 		}
@@ -258,6 +274,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 			if (imeiKnown) {
 				sendAckSafe(clientId, "nema dovoljno podataka za komandu");
 			}
+			logPacketFailure(clientId, "nedostatak podataka za komandu", packet);
 			return true;
 		}
 
@@ -269,6 +286,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 			if (imeiKnown) {
 				sendAckSafe(clientId, "greska parsiranja komande");
 			}
+			logPacketFailure(clientId, "greska parsiranja komande", packet);
 			return true;
 		}
 
@@ -282,6 +300,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 				if (imeiKnown) {
 					sendAckSafe(clientId, "nema dovoljno podataka za records left/number of records");
 				}
+				logPacketFailure(clientId, "nedostatak podataka za records left/number of records", packet);
 				return true;
 			}
 
@@ -295,6 +314,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 				if (imeiKnown) {
 					sendAckSafe(clientId, "greska parsiranja records left");
 				}
+				logPacketFailure(clientId, "greska parsiranja records left", packet);
 				return true;
 			}
 
@@ -310,6 +330,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 					if (imeiKnown) {
 						sendAckSafe(clientId, "nevalidan broj zapisa");
 					}
+					logPacketFailure(clientId, "nevalidan broj zapisa", packet);
 					return true;
 				}
 
@@ -321,6 +342,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 				if (imeiKnown) {
 					sendAckSafe(clientId, "greska parsiranja number of records");
 				}
+				logPacketFailure(clientId, "greska parsiranja number of records", packet);
 				return true;
 			}
 
@@ -343,10 +365,11 @@ public class RuptelaOpstiThread extends OpstiThread {
 
 					while (brZapisa < ukZapisa) {
 						int pocetak = offset;
-
+						
 						if (ulaz.length() < offset + 46) {
 							logger.warn("RUPTELA [{}]: Недостатак података за record header (запис {}/{})",
 							            clientId, brZapisa + 1, ukZapisa);
+							failureReason = "nedostatak podataka za record header";
 							break;
 						}
 						offset += 46;
@@ -354,6 +377,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 						if (ulaz.length() < offset + 2) {
 							logger.warn("RUPTELA [{}]: Недостатак података за brJedan (запис {}/{})",
 							            clientId, brZapisa + 1, ukZapisa);
+							failureReason = "nedostatak podataka za brJedan";
 							break;
 						}
 						int brJedan;
@@ -362,6 +386,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 						} catch (NumberFormatException | StringIndexOutOfBoundsException e) {
 							logger.error("RUPTELA [{}]: Грешка парсирања brJedan (запис {}/{}): {}",
 							            clientId, brZapisa + 1, ukZapisa, e.getMessage());
+							failureReason = "greska parsiranja brJedan";
 							break;
 						}
 						offset += 2;
@@ -370,6 +395,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 						if (ulaz.length() < offset + 2) {
 							logger.warn("RUPTELA [{}]: Недостатак података за brDva (запис {}/{})",
 							            clientId, brZapisa + 1, ukZapisa);
+							failureReason = "nedostatak podataka za brDva";
 							break;
 						}
 						int brDva;
@@ -378,6 +404,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 						} catch (NumberFormatException | StringIndexOutOfBoundsException e) {
 							logger.error("RUPTELA [{}]: Грешка парсирања brDva (запис {}/{}): {}",
 							            clientId, brZapisa + 1, ukZapisa, e.getMessage());
+							failureReason = "greska parsiranja brDva";
 							break;
 						}
 						offset += 2;
@@ -386,6 +413,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 						if (ulaz.length() < offset + 2) {
 							logger.warn("RUPTELA [{}]: Недостатак података за brCetiri (запис {}/{})",
 							            clientId, brZapisa + 1, ukZapisa);
+							failureReason = "nedostatak podataka za brCetiri";
 							break;
 						}
 						int brCetiri;
@@ -394,6 +422,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 						} catch (NumberFormatException | StringIndexOutOfBoundsException e) {
 							logger.error("RUPTELA [{}]: Грешка парсирања brCetiri (запис {}/{}): {}",
 							            clientId, brZapisa + 1, ukZapisa, e.getMessage());
+							failureReason = "greska parsiranja brCetiri";
 							break;
 						}
 						offset += 2;
@@ -402,6 +431,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 						if (ulaz.length() < offset + 2) {
 							logger.warn("RUPTELA [{}]: Недостатак података за brOsam (запис {}/{})",
 							            clientId, brZapisa + 1, ukZapisa);
+							failureReason = "nedostatak podataka za brOsam";
 							break;
 						}
 						int brOsam;
@@ -410,6 +440,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 						} catch (NumberFormatException | StringIndexOutOfBoundsException e) {
 							logger.error("RUPTELA [{}]: Грешка парсирања brOsam (запис {}/{}): {}",
 							            clientId, brZapisa + 1, ukZapisa, e.getMessage());
+							failureReason = "greska parsiranja brOsam";
 							break;
 						}
 						offset += 2;
@@ -418,6 +449,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 						if (ulaz.length() < offset) {
 							logger.warn("RUPTELA [{}]: Недостатак података за цео record (запис {}/{})",
 							            clientId, brZapisa + 1, ukZapisa);
+							failureReason = "nedostatak podataka za ceo record";
 							break;
 						}
 
@@ -436,9 +468,13 @@ public class RuptelaOpstiThread extends OpstiThread {
 						} catch (Exception e) {
 							logger.error("RUPTELA [{}]: Грешка при парсирању/упису записа {}/{}: {}",
 							            clientId, brZapisa + 1, ukZapisa, e.getMessage());
+							failureReason = "greska parsiranja/obrada zapisa";
 						}
 					}
 
+					if (failureReason != null) {
+						logPacketFailure(clientId, failureReason, packet);
+					}
 					try {
 						out.write(odg);
 						out.flush();
@@ -459,6 +495,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 						if (ulaz.length() < offset + 12) {
 							logger.warn("RUPTELA [{}]: Недостатак података за проширени record header (запис {}/{})",
 							            clientId, brZapisa + 1, ukZapisa);
+							failureReason = "nedostatak podataka za prosireni record header";
 							break;
 						}
 
@@ -469,6 +506,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 						} catch (NumberFormatException | StringIndexOutOfBoundsException e) {
 							logger.error("RUPTELA [{}]: Грешка парсирања prvi/drugi (запис {}/{}): {}",
 							            clientId, brZapisa + 1, ukZapisa, e.getMessage());
+							failureReason = "greska parsiranja prvi/drugi";
 							break;
 						}
 
@@ -477,6 +515,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 						if (ulaz.length() < offset + 50) {
 							logger.warn("RUPTELA [{}]: Недостатак података за проширени record header (запис {}/{})",
 							            clientId, brZapisa + 1, ukZapisa);
+							failureReason = "nedostatak podataka za prosireni record header (50)";
 							break;
 						}
 						offset += 50;
@@ -484,6 +523,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 						if (ulaz.length() < offset + 2) {
 							logger.warn("RUPTELA [{}]: Недостатак података за brJedan (проширени, запис {}/{})",
 							            clientId, brZapisa + 1, ukZapisa);
+							failureReason = "nedostatak podataka za brJedan (extended)";
 							break;
 						}
 						int brJedan;
@@ -492,6 +532,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 						} catch (NumberFormatException | StringIndexOutOfBoundsException e) {
 							logger.error("RUPTELA [{}]: Грешка парсирања brJedan (проширени, запис {}/{}): {}",
 							            clientId, brZapisa + 1, ukZapisa, e.getMessage());
+							failureReason = "greska parsiranja brJedan (extended)";
 							break;
 						}
 						offset += 2;
@@ -500,6 +541,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 						if (ulaz.length() < offset + 2) {
 							logger.warn("RUPTELA [{}]: Недостатак података за brDva (проширени, запис {}/{})",
 							            clientId, brZapisa + 1, ukZapisa);
+							failureReason = "nedostatak podataka za brDva (extended)";
 							break;
 						}
 						int brDva;
@@ -508,6 +550,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 						} catch (NumberFormatException | StringIndexOutOfBoundsException e) {
 							logger.error("RUPTELA [{}]: Грешка парсирања brDva (проширени, запис {}/{}): {}",
 							            clientId, brZapisa + 1, ukZapisa, e.getMessage());
+							failureReason = "greska parsiranja brDva (extended)";
 							break;
 						}
 						offset += 2;
@@ -516,6 +559,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 						if (ulaz.length() < offset + 2) {
 							logger.warn("RUPTELA [{}]: Недостатак података за brCetiri (проширени, запис {}/{})",
 							            clientId, brZapisa + 1, ukZapisa);
+							failureReason = "nedostatak podataka za brCetiri (extended)";
 							break;
 						}
 						int brCetiri;
@@ -524,6 +568,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 						} catch (NumberFormatException | StringIndexOutOfBoundsException e) {
 							logger.error("RUPTELA [{}]: Грешка парсирања brCetiri (проширени, запис {}/{}): {}",
 							            clientId, brZapisa + 1, ukZapisa, e.getMessage());
+							failureReason = "greska parsiranja brCetiri (extended)";
 							break;
 						}
 						offset += 2;
@@ -532,6 +577,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 						if (ulaz.length() < offset + 2) {
 							logger.warn("RUPTELA [{}]: Недостатак података за brOsam (проширени, запис {}/{})",
 							            clientId, brZapisa + 1, ukZapisa);
+							failureReason = "nedostatak podataka za brOsam (extended)";
 							break;
 						}
 						int brOsam;
@@ -540,6 +586,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 						} catch (NumberFormatException | StringIndexOutOfBoundsException e) {
 							logger.error("RUPTELA [{}]: Грешка парсирања brOsam (проширени, запис {}/{}): {}",
 							            clientId, brZapisa + 1, ukZapisa, e.getMessage());
+							failureReason = "greska parsiranja brOsam (extended)";
 							break;
 						}
 						offset += 2;
@@ -548,6 +595,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 						if (ulaz.length() < offset) {
 							logger.warn("RUPTELA [{}]: Недостатак података за цео проширени record (запис {}/{})",
 							            clientId, brZapisa + 1, ukZapisa);
+							failureReason = "nedostatak podataka za ceo prosireni record";
 							break;
 						}
 
@@ -617,9 +665,13 @@ public class RuptelaOpstiThread extends OpstiThread {
 						} catch (Exception e) {
 							logger.error("RUPTELA [{}]: Грешка при парсирању/спајању проширеног записа {}/{}: {}",
 							            clientId, brZapisa + 1, ukZapisa, e.getMessage());
+							failureReason = "greska parsiranja/spajanja prosirenog zapisa";
 						}
 					}
 
+					if (failureReason != null) {
+						logPacketFailure(clientId, failureReason, packet);
+					}
 					if (prvo != null) {
 						obradaJavljanja(prvo, prvoObd);
 
@@ -645,6 +697,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 				if (imeiKnown) {
 					sendAckSafe(clientId, "objekat nije pronadjen");
 				}
+				logPacketFailure(clientId, "objekat nije pronadjen", packet);
 			}
 		} else {
 			logger.warn("RUPTELA [{}]: Nepoznata komanda: {} (0x{})",
@@ -652,6 +705,7 @@ public class RuptelaOpstiThread extends OpstiThread {
 			if (imeiKnown) {
 				sendAckSafe(clientId, "nepoznata komanda");
 			}
+			logPacketFailure(clientId, "nepoznata komanda", packet);
 		}
 
 		return true;
