@@ -223,7 +223,7 @@ public abstract class OpstiThread implements Runnable {
 			}
 			
 			if (javljanjeTrenutno.getDatumVreme().before(date)) {
-				logger.warn("Odbačeno javljanje sa datumom pre minimuma: {}", javljanjeTrenutno.getDatumVreme());
+				logger.warn("datum pre minimuma: {}", kodUredjaja);
 				return;
 			}
 			
