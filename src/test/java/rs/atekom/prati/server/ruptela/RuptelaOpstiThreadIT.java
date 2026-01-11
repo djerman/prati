@@ -109,9 +109,6 @@ public class RuptelaOpstiThreadIT {
 
         public TestableRuptelaThread(LinkedBlockingQueue<Socket> q, OpstiServer s) {
             super(q, s);
-            // подеси ACK на нешто безопасно (иначе out.write(odg) може бацити NPE)
-            this.odg = new byte[] { 0x00 }; // <-- ако је поље protected у бази
-            
         }
 
         // ⬇️ КЉУЧНО: заобиђи базу/сервисе — само „измисли“ објекат за IMEI
